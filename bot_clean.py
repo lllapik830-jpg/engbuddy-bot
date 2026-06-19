@@ -206,7 +206,7 @@ async def reset_cmd(m: Message):
         save_users(users)
         await m.reply("🔄 Reset complete. Use /start to begin again.")
         
-# --- КОМАНДА /UPGRADE (ПОКУПКА ПРЕМИУМА) ---
+
 @dp.message(Command("upgrade"))
 async def upgrade_cmd(m: Message):
     user_id = str(m.from_user.id)
@@ -228,6 +228,12 @@ async def upgrade_cmd(m: Message):
             need_phone_number=True
         )
         
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💎 Купить Premium за 15 Stars", url=invoice_link)
+            ]
+        ])
+        
         await m.reply(
             f"💎 *Upgrade to Premium!*\n\n"
             f"Get unlimited access:\n"
@@ -236,8 +242,9 @@ async def upgrade_cmd(m: Message):
             f"• 📚 Lessons and tests\n"
             f"• 📈 Personal progress tracking\n\n"
             f"💰 Price: *15 Stars*\n\n"
-            f"👉 [Pay with Stars]({invoice_link})",
-            parse_mode="Markdown"
+            f"Press the button below to pay 👇",
+            parse_mode="Markdown",
+            reply_markup=keyboard
         )
     except Exception as e:
         logging.error(f"Stars invoice error: {e}")
