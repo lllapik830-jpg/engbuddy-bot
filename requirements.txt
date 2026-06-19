@@ -1,0 +1,6 @@
+aiogram==3.13.1
+requests==2.32.3
+SpeechRecognition==3.10.0
+pydub==0.25.1
+gTTS==2.5.1
+flask==3.0.3
