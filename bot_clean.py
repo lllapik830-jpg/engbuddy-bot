@@ -205,6 +205,43 @@ async def reset_cmd(m: Message):
         del users[user_id]
         save_users(users)
         await m.reply("🔄 Reset complete. Use /start to begin again.")
+        
+# --- КОМАНДА /UPGRADE (ПОКУПКА ПРЕМИУМА) ---
+@dp.message(Command("upgrade"))
+async def upgrade_cmd(m: Message):
+    user_id = str(m.from_user.id)
+    users = load_users()
+    
+    if user_id not in users:
+        await m.reply("Please use /start first.")
+        return
+    
+    try:
+        invoice_link = await bot.create_invoice_link(
+            title="EngBuddy Premium — 1 month",
+            description="Full access: unlimited messages, voice replies, lessons and tests!",
+            payload=f"premium_{user_id}",
+            provider_token="",
+            currency="XTR",
+            prices=[{"label": "Premium (1 month)", "amount": 15}],
+            need_name=True,
+            need_phone_number=True
+        )
+        
+        await m.reply(
+            f"💎 *Upgrade to Premium!*\n\n"
+            f"Get unlimited access:\n"
+            f"• 🎤 Unlimited voice messages\n"
+            f"• 🔊 Unlimited voice replies\n"
+            f"• 📚 Lessons and tests\n"
+            f"• 📈 Personal progress tracking\n\n"
+            f"💰 Price: *15 Stars*\n\n"
+            f"👉 [Pay with Stars]({invoice_link})",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.error(f"Stars invoice error: {e}")
+        await m.reply("❌ Payment system error. Please try again later.")
 
 @dp.callback_query()
 async def handle_callback(callback: CallbackQuery):
