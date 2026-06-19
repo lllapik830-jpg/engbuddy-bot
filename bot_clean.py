@@ -225,6 +225,9 @@ async def catch_all(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
+            # --- ЛОГИРОВАНИЕ КАЖДОГО СООБЩЕНИЯ ---
+    user_name = users.get(user_id, {}).get("name", "Unknown")
+    logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
     
     user_data = users[user_id]
     step = user_data.get("step", "ready")
