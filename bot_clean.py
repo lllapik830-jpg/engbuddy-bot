@@ -890,7 +890,7 @@ async def catch_all(m: Message):
                 user_data["exercise_text"] = ""
                 user_data["exercise_answer"] = ""
                 save_users(users)
-                return True
+                return
             else:
                 attempt += 1
                 user_data["exercise_attempt"] = attempt
@@ -904,11 +904,10 @@ async def catch_all(m: Message):
                     user_data["exercise_text"] = ""
                     user_data["exercise_answer"] = ""
                     save_users(users)
-                    return True
+                    return
                 else:
                     await m.reply("❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
-                    return True
-            return True
+                    return
 
     # --- Задание на соответствие ---
     if user_data.get("vocab_sentences") and user_data.get("vocab_phase") == "match":
@@ -916,11 +915,11 @@ async def catch_all(m: Message):
             answer = m.text.strip()
             if not answer.isdigit() or len(answer) != 4:
                 await m.reply("❌ *Неверный формат.* Введи 4 цифры (например, 1432).", parse_mode="Markdown")
-                return True
+                return
             digits = [int(d) for d in answer]
             if set(digits) != {1, 2, 3, 4}:
                 await m.reply("❌ *Неверный формат.* Используй цифры от 1 до 4 без повторений.", parse_mode="Markdown")
-                return True
+                return
             words = user_data.get("vocab_words", [])
             sentences = user_data.get("vocab_sentences", [])
             correct = all(words[i]['word'].lower() in sentences[digits[i]-1].lower() for i in range(4))
@@ -944,7 +943,7 @@ async def catch_all(m: Message):
                     await m.reply(f"❌ *Не все слова подобраны верно.*\nОшибки в: {', '.join(errors)}")
                 else:
                     await m.reply("❌ *Попробуй ещё раз.*")
-            return True
+            return
 
     # --- Вокабуляр: финальное задание (голос) ---
     if user_data.get("vocab_words") and user_data.get("vocab_phase") == "final":
@@ -973,14 +972,21 @@ async def catch_all(m: Message):
                 user_data["vocab_words"] = []
                 user_data["vocab_phase"] = ""
                 save_users(users)
-                return True
+                return
             except Exception as e:
                 logging.error(f"Voice error: {e}")
                 await m.reply("❌ Не удалось распознать речь. Попробуй ещё раз.")
-                return True
+                return
         else:
             await m.reply("🗣️ *Отправь голосовое сообщение с предложением.*")
-            return True
+            return
+
+    # --- ВОКАБУЛЯР: пользователь пишет предложение со словом ---
+    if user_data.get("vocab_words") and user_data.get("vocab_phase") == "word":
+        if m.text and not m.text.startswith("/"):
+            await m.reply("✅ *Отлично! Твоё предложение сохранено.*\n\n" + m.text)
+            await m.reply("👇 *Нажми «Следующее слово», чтобы продолжить.*")
+            return
 
     if step == "name":
         user_data["name"] = m.text.strip()
