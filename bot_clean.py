@@ -251,17 +251,18 @@ def generate_lesson_data(level, topic, user_name):
         logging.error(f"Lesson generation error: {e}")
         return None
 
-def generate_tobe_exercises(level, user_name):
+def generate_grammar_exercises(level, topic, user_name):
     prompt = f"""
-    Generate 4 English sentences for level {level} with gaps (____) where the student must fill in the correct form of the verb TO BE (am, is, are).
+    Generate 4 English sentences for level {level} on the topic "{topic}" with gaps (____) where the student must fill in the correct word.
+    Topic "{topic}" grammar rules:
+    - For "tobe": use am, is, are
+    - For "presentsimple": use the correct verb form (add -s/-es for he/she/it, or keep base form for I/you/we/they)
     Student's name is {user_name}.
     Return ONLY a JSON object with the following structure:
     {{
         "sentences": [
             {{"text": "I ____ a student.", "answer": "am"}},
-            {{"text": "She ____ my friend.", "answer": "is"}},
-            {{"text": "We ____ happy.", "answer": "are"}},
-            {{"text": "They ____ at home.", "answer": "are"}}
+            {{"text": "She ____ to school every day.", "answer": "goes"}}
         ]
     }}
     Do not include any other text, only the JSON.
@@ -283,7 +284,7 @@ def generate_tobe_exercises(level, user_name):
             return json.loads(json_match.group())
         return None
     except Exception as e:
-        logging.error(f"Tobe exercises error: {e}")
+        logging.error(f"Exercises generation error: {e}")
         return None
 
 def section_content(level, section):
@@ -334,11 +335,16 @@ def section_content(level, section):
             "• Привычек (I drink coffee every morning)\n"
             "• Расписаний (The train leaves at 8 pm)\n\n"
             "📌 *Формула:*\n"
-            "I/You/We/They + глагол\n"
-            "He/She/It + глагол + s\n\n"
+            "I/You/We/They + глагол (без окончания)\n"
+            "He/She/It + глагол + **s** (или **es**)\n\n"
             "❌ *Отрицание:* don't / doesn't\n"
             "❓ *Вопрос:* Do / Does\n\n"
-            "✅ *Примеры:*\nI work in an office.\nShe works from home.\nDo you like music?"
+            "✅ *Примеры:*\n"
+            "• I work in an office.\n"
+            "• She works from home.\n"
+            "• Do you like music?\n"
+            "• He doesn't drink coffee.\n\n"
+            "👇 *Теперь попробуй сам!*"
         )
     elif section == "prepositions":
         return (
@@ -498,6 +504,7 @@ async def handle_callback(callback: CallbackQuery):
     user_data = users.get(user_id, {})
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
+    topic = ""
 
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
@@ -543,12 +550,14 @@ async def handle_callback(callback: CallbackQuery):
             save_users(users)
             await callback.answer()
             return
-        elif section == "tobe":
+        elif section in ["tobe", "presentsimple"]:
             content = section_content(level, section)
             await callback.message.reply(content, parse_mode="Markdown")
-            # Кнопка "Начать задание"
+            user_data["last_section"] = "grammar"
+            user_data["grammar_topic"] = section
+            save_users(users)
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📝 Задание", callback_data=f"tobe_exercise_start_{level}")]
+                [InlineKeyboardButton(text="📝 Задание", callback_data=f"exercise_start_{level}_{section}")]
             ])
             await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
             await callback.answer()
@@ -600,34 +609,44 @@ async def handle_callback(callback: CallbackQuery):
         topic = parts[2]
         content = section_content(level, topic)
         await callback.message.reply(content, parse_mode="Markdown")
-        if topic == "tobe":
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📝 Задание", callback_data=f"tobe_exercise_start_{level}")]
-            ])
-            await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
+        user_data["last_section"] = "grammar"
+        user_data["grammar_topic"] = topic
+        save_users(users)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Задание", callback_data=f"exercise_start_{level}_{topic}")]
+        ])
+        await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
         await callback.answer()
         return
 
-    if callback.data.startswith("tobe_exercise_start_"):
-        level = callback.data.split("_")[3]
-        user_data["tobe_exercises"] = []
-        user_data["tobe_current"] = 0
-        exercises_data = generate_tobe_exercises(level, user_name)
+    if callback.data.startswith("exercise_start_"):
+        parts = callback.data.split("_")
+        level = parts[2]
+        topic = parts[3]
+        user_data["grammar_exercises"] = []
+        user_data["grammar_current"] = 0
+        exercises_data = generate_grammar_exercises(level, topic, user_name)
         if exercises_data and "sentences" in exercises_data:
-            user_data["tobe_exercises"] = exercises_data["sentences"]
+            user_data["grammar_exercises"] = exercises_data["sentences"]
+            user_data["grammar_topic"] = topic
             save_users(users)
-            await send_next_tobe_exercise(callback.message, user_id)
+            await send_next_grammar_exercise(callback.message, user_id)
         else:
             await callback.message.reply("❌ Не удалось сгенерировать задания. Попробуйте позже.")
         await callback.answer()
         return
 
-    if callback.data.startswith("tobe_next_"):
+    if callback.data.startswith("grammar_next_"):
         user_data = users.get(user_id, {})
-        idx = user_data.get("tobe_current", 0) + 1
-        user_data["tobe_current"] = idx
+        idx = user_data.get("grammar_current", 0) + 1
+        user_data["grammar_current"] = idx
         save_users(users)
-        await send_next_tobe_exercise(callback.message, user_id)
+        await send_next_grammar_exercise(callback.message, user_id)
+        await callback.answer()
+        return
+
+    if callback.data.startswith("grammar_retry_"):
+        await callback.message.reply("✍️ *Напиши правильный ответ:*", parse_mode="Markdown")
         await callback.answer()
         return
 
@@ -640,16 +659,17 @@ async def handle_callback(callback: CallbackQuery):
     await callback.message.reply("⚠️ Неизвестная команда.")
     await callback.answer()
 
-async def send_next_tobe_exercise(message: types.Message, user_id: str):
+async def send_next_grammar_exercise(message: types.Message, user_id: str):
     users = load_users()
     user_data = users.get(user_id, {})
-    exercises = user_data.get("tobe_exercises", [])
-    idx = user_data.get("tobe_current", 0)
+    exercises = user_data.get("grammar_exercises", [])
+    idx = user_data.get("grammar_current", 0)
 
     if idx >= len(exercises):
+        topic_name = "глагол to be" if user_data.get("grammar_topic") == "tobe" else "Present Simple"
         await message.reply(
-            "🎉 *Отлично! Ты справился со всеми заданиями!*\n\n"
-            "Ты отлично усвоил глагол to be. Теперь ты готов двигаться дальше! 💪",
+            f"🎉 *Отлично! Ты справился со всеми заданиями по {topic_name}!*\n\n"
+            f"Ты отлично усвоил эту тему. Теперь ты готов двигаться дальше! 💪",
             parse_mode="Markdown"
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -659,15 +679,15 @@ async def send_next_tobe_exercise(message: types.Message, user_id: str):
         return
 
     exercise = exercises[idx]
-    text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильную форму глагола to be (am, is, are):_"
+    text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_"
     await message.reply(text, parse_mode="Markdown")
 
-async def check_tobe_answer(m: Message):
+async def check_grammar_answer(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     user_data = users.get(user_id, {})
-    exercises = user_data.get("tobe_exercises", [])
-    idx = user_data.get("tobe_current", 0)
+    exercises = user_data.get("grammar_exercises", [])
+    idx = user_data.get("grammar_current", 0)
 
     if idx >= len(exercises):
         return False
@@ -677,7 +697,6 @@ async def check_tobe_answer(m: Message):
 
     if user_answer == correct_answer:
         await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
-        # Произносим правильный ответ
         audio_bytes = elevenlabs_tts(correct_answer)
         if audio_bytes:
             try:
@@ -688,15 +707,13 @@ async def check_tobe_answer(m: Message):
                 os.unlink(path)
             except Exception as e:
                 logging.error(f"TTS error: {e}")
-        # Кнопка "Дальше"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"tobe_next_{idx}")]
+            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
         ])
         await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
         return True
     else:
         await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
-        # Произносим правильный ответ
         audio_bytes = elevenlabs_tts(correct_answer)
         if audio_bytes:
             try:
@@ -708,16 +725,10 @@ async def check_tobe_answer(m: Message):
             except Exception as e:
                 logging.error(f"TTS error: {e}")
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"tobe_retry_{idx}")]
+            [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"grammar_retry_{idx}")]
         ])
         await m.reply("👇 *Попробуй ещё раз.*", parse_mode="Markdown", reply_markup=keyboard)
         return False
-
-@dp.callback_query()
-async def handle_tobe_retry(callback: CallbackQuery):
-    if callback.data.startswith("tobe_retry_"):
-        await callback.message.reply("✍️ *Напиши правильную форму глагола to be (am, is, are):*", parse_mode="Markdown")
-        await callback.answer()
 
 @dp.message()
 async def catch_all(m: Message):
@@ -797,6 +808,12 @@ async def catch_all(m: Message):
     level = user_data.get("level", "A1")
     last_section = user_data.get("last_section", "")
 
+    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ (перехватываем до алфавита/цифр) ---
+    if user_data.get("grammar_exercises") and user_data.get("grammar_current") is not None:
+        if m.text and not m.text.startswith("/"):
+            await check_grammar_answer(m)
+            return
+
     # --- АЛФАВИТ ---
     if last_section == "alphabet" and m.text and not m.text.startswith("/"):
         letter = m.text.strip().upper()
@@ -845,12 +862,6 @@ async def catch_all(m: Message):
                 return
         except ValueError:
             await m.reply("❌ Напиши **цифру** (например, 5).")
-            return
-
-    # --- TO BE ЗАДАНИЕ ---
-    if user_data.get("tobe_exercises") and user_data.get("tobe_current") is not None:
-        if m.text and not m.text.startswith("/"):
-            await check_tobe_answer(m)
             return
 
     if m.text and not m.text.startswith("/"):
