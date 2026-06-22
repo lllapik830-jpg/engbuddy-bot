@@ -109,9 +109,9 @@ def translate_to_language(text, target_lang):
                     {"role": "system", "content": f"Translate the following English text to NATURAL {target_lang}. Keep the meaning, but make it sound like a friendly tutor explaining to a student. Only output the {target_lang} translation, nothing else."},
                     {"role": "user", "content": text}
                 ],
-                "max_tokens": 150
+                "max_tokens": 800
             },
-            timeout=15
+            timeout=20
         )
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
@@ -445,7 +445,6 @@ async def catch_all(m: Message):
         user_data["step"] = "ready"
         save_users(users)
         
-        # --- КРАСОЧНОЕ СООБЩЕНИЕ НА АНГЛИЙСКОМ ---
         welcome_en = (
             f"🌟 *Welcome, {user_data['name']}!*\n\n"
             f"🌐 Your native language: *{user_data['language']}*\n\n"
@@ -463,7 +462,6 @@ async def catch_all(m: Message):
             "👇 *Choose what to do using the buttons below.*"
         )
         
-        # --- КОПИЯ ДЛЯ КНОПКИ ПЕРЕВОДА ---
         translation_ru = translate_to_language(welcome_en, user_data["language"])
         if translation_ru:
             user_translations[user_id] = {"translation": translation_ru}
@@ -476,7 +474,6 @@ async def catch_all(m: Message):
     lang = user_data["language"]
     level = user_data.get("level", "A1")
 
-    # --- ТЕКСТ ---
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
         answer_en = ask_gpt(m.text, user_name, level)
@@ -495,7 +492,6 @@ async def catch_all(m: Message):
                 logging.error(f"TTS error: {e}")
         return
 
-    # --- ГОЛОС ---
     if m.voice:
         if not is_premium(user_id):
             today = date.today().isoformat()
