@@ -173,7 +173,6 @@ def translate_keyboard(lang="Russian"):
         [InlineKeyboardButton(text=f"📖 Перевести на {lang}", callback_data="translate")]
     ])
 
-# --- МЕНЮ УРОКОВ ---
 def lesson_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="A1", callback_data="level_A1")],
@@ -197,7 +196,6 @@ def topic_menu(level):
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=topic, callback_data=f"topic_{level}_{topic}")])
     return keyboard
 
-# --- ГЕНЕРАЦИЯ УРОКА ЧЕРЕЗ GPT ---
 def generate_lesson(level, topic, user_name):
     prompt = f"""
     Generate a 15-minute English lesson for level {level} on the topic "{topic}".
@@ -257,9 +255,26 @@ async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
+        # Сохраняем подписку отдельно
+        premium_until = users[user_id].get("premium_until", 0)
+        # Удаляем все данные пользователя
         del users[user_id]
+        # Создаём нового пользователя с сохранённой подпиской
+        users[user_id] = {
+            "name": None,
+            "language": None,
+            "level": "A1",
+            "step": "name",
+            "premium_until": premium_until
+        }
         save_users(users)
-        await m.reply("🔄 Reset complete. Use /start to begin again.")
+        await m.reply(
+            "🔄 Данные сброшены.\n"
+            "Ваша подписка сохранена ✅\n"
+            "Используйте /start, чтобы начать заново."
+        )
+    else:
+        await m.reply("❌ Нет данных для сброса.")
 
 @dp.message(Command("upgrade"))
 async def upgrade_cmd(m: Message):
@@ -345,6 +360,9 @@ async def activate_cmd(m: Message):
 async def handle_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
     users = load_users()
+    user_data = users.get(user_id, {})
+    user_name = user_data.get("name", "Student")
+    lang = user_data.get("language", "Russian")
     
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
@@ -367,7 +385,6 @@ async def handle_callback(callback: CallbackQuery):
     
     elif callback.data.startswith("level_"):
         level = callback.data.split("_")[1]
-        user_data = users.get(user_id, {})
         user_data["current_level"] = level
         save_users(users)
         await callback.message.reply(
@@ -381,21 +398,30 @@ async def handle_callback(callback: CallbackQuery):
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
-        user_data = users.get(user_id, {})
-        user_name = user_data.get("name", "Student")
         
         await callback.message.reply(f"⏳ *Генерирую урок на тему «{topic}» ({level})...*\n\nЭто займёт 10–15 секунд.", parse_mode="Markdown")
         
         lesson = generate_lesson(level, topic, user_name)
         if lesson:
-            # Отправляем текстовую часть урока
+            # --- БЛОК VOCABULARY ---
             await callback.message.reply(
-                f"📚 *Урок {level} — {topic}*\n\n{lesson}",
+                f"📚 *Вокабуляр — {topic} ({level})*\n\n{lesson[:800]}...", 
                 parse_mode="Markdown"
             )
-            # Генерация аудио для аудирования (в будущем — 3 фразы из урока)
-            # Пока что просто заглушка
-            await callback.message.reply("🎧 *Аудирование:* отправьте голосовое с ответом на вопрос из урока, и я проверю.")
+            # Голосовое для озвучивания слов (фрагмент)
+            audio_bytes = elevenlabs_tts(lesson[:300])
+            if audio_bytes:
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                        tmp.write(audio_bytes)
+                        path = tmp.name
+                    await callback.message.reply_voice(FSInputFile(path))
+                    os.unlink(path)
+                except Exception as e:
+                    logging.error(f"TTS error: {e}")
+            # Кнопка перевода
+            user_translations[user_id] = {"translation": translate_to_language(lesson[:800], lang)}
+            await callback.message.reply("📖 Нажми, чтобы перевести текст выше.", reply_markup=translate_keyboard(lang))
         else:
             await callback.message.reply("❌ Не удалось сгенерировать урок. Попробуйте позже.")
         await callback.answer()
