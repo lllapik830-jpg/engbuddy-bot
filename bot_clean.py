@@ -689,19 +689,22 @@ async def send_next_grammar_exercise(message: types.Message, user_id: str):
 
     if idx >= len(exercises):
         topic_name = "глагол to be" if user_data.get("grammar_topic") == "tobe" else "Present Simple"
+        level = user_data.get("current_level", "A1")
+
         await message.reply(
             f"🎉 *Отлично! Ты справился со всеми заданиями по {topic_name}!*\n\n"
             f"Ты отлично усвоил эту тему. Теперь ты готов двигаться дальше! 💪",
             parse_mode="Markdown"
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{user_data.get('current_level', 'A1')}")]
+            [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{level}")]
         ])
         await message.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
         return
 
     exercise = exercises[idx]
     user_data["grammar_phase"] = "write"
+    user_data["grammar_attempt"] = 0
     save_users(users)
     text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_"
     await message.reply(text, parse_mode="Markdown")
