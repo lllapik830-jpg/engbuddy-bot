@@ -42,7 +42,43 @@ dp = Dispatcher()
 USER_DATA_FILE = "users.json"
 MANAGER_ID = 1809897303
 
-LESSONS = {}
+# --- УРОКИ ---
+LESSONS = {
+    "1": {
+        "title": "Введение",
+        "content": (
+            "🌟 *Добро пожаловать в мир английского языка!*\n\n"
+            "Ты сделал правильный выбор. Английский — главный язык международного общения. На нём говорят более 1,5 миллиарда человек по всему миру.\n\n"
+            "🎯 *Почему стоит учить английский?*\n\n"
+            "🌍 *Язык международного общения.*\n"
+            "Английский — рабочий язык ООН, НАТО, Евросоюза и большинства международных организаций.\n\n"
+            "💼 *Карьера и заработок.*\n"
+            "Знание английского открывает доступ к вакансиям в международных компаниях, удалённой работе и англоязычным профессиональным ресурсам.\n\n"
+            "🎓 *Образование.*\n"
+            "Лучшие университеты мира преподают на английском. Большинство научных статей, документации и онлайн-курсов — на английском языке.\n\n"
+            "✈️ *Путешествия.*\n"
+            "В большинстве стран мира тебя поймут на английском. Даже базовый уровень упрощает поездки, бронирование и общение.\n\n"
+            "💻 *Интернет и культура.*\n"
+            "Более половины контента в интернете — на английском. Фильмы, сериалы, музыка, книги, подкасты — всё это доступно в оригинале.\n\n"
+            "⚙️ *Доступ к технологиям.*\n"
+            "Документация к программам, языкам программирования, новым устройствам — практически всегда сначала на английском. В IT-сфере английский является стандартом.\n\n"
+            "📚 *Как мы будем учиться?*\n\n"
+            "Наш курс проведёт тебя от нуля до среднего уровня:\n"
+            "• Произношение и звуки\n"
+            "• Грамматика\n"
+            "• Более 2000 слов\n"
+            "• Аудирование и диалоги\n"
+            "• Разговорная практика\n\n"
+            "💡 *Совет:* не торопись. Переходи к следующему уроку только когда будешь уверен, что освоил текущий материал полностью.\n\n"
+            "🔥 *Интересные факты об английском:*\n"
+            "• Английский имеет официальный статус в более чем 50 странах.\n"
+            "• Около 30% слов в английском имеют французское происхождение.\n"
+            "• Самое употребительное слово — артикль «the».\n"
+            "• В английском более 270 000 слов.\n\n"
+            "👇 *Начни своё путешествие в английский прямо сейчас!*"
+        )
+    }
+}
 
 def load_users():
     try:
@@ -60,12 +96,6 @@ def is_premium(user_id):
     user_data = users.get(user_id, {})
     premium_until = user_data.get("premium_until", 0)
     return time.time() < premium_until
-
-def clear_state(user_id):
-    users = load_users()
-    if user_id in users:
-        users[user_id]["current_lesson"] = None
-        save_users(users)
 
 def get_system_prompt(user_name="Student", level="A1"):
     return (
@@ -165,12 +195,22 @@ def translate_keyboard(lang="Russian"):
         [InlineKeyboardButton(text=f"📖 Перевести на {lang}", callback_data="translate")]
     ])
 
+def lessons_menu():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1. Введение", callback_data="lesson_1")]
+    ])
+    return keyboard
+
+def back_to_lessons_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Вернуться к урокам", callback_data="back_to_lessons")]
+    ])
+
 @dp.message(Command("start"))
 async def start_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
-        clear_state(user_id)
         user_data = users[user_id]
         if user_data.get("name") is None:
             user_data["step"] = "name"
@@ -257,21 +297,7 @@ async def lesson_cmd(m: Message):
             parse_mode="Markdown"
         )
         return
-    if not LESSONS:
-        await m.reply(
-            "📚 *Уроки скоро появятся!*\n\n"
-            "Я добавляю новые материалы каждый день. Загляни позже! 🚀",
-            parse_mode="Markdown"
-        )
-        return
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="A1", callback_data="level_A1")],
-        [InlineKeyboardButton(text="A2", callback_data="level_A2")],
-        [InlineKeyboardButton(text="B1", callback_data="level_B1")],
-        [InlineKeyboardButton(text="B2", callback_data="level_B2")],
-        [InlineKeyboardButton(text="C1", callback_data="level_C1")]
-    ])
-    await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=keyboard)
+    await m.reply("📚 *Выберите урок:*", parse_mode="Markdown", reply_markup=lessons_menu())
 
 @dp.message(Command("buy"))
 async def buy_cmd(m: Message):
@@ -347,39 +373,26 @@ async def handle_callback(callback: CallbackQuery):
         await callback.answer()
         return
 
-    if callback.data.startswith("level_"):
-        level = callback.data.split("_")[1]
-        user_data["current_level"] = level
-        save_users(users)
-        if level in LESSONS:
-            topics = list(LESSONS[level].keys())
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-            for topic in topics:
-                keyboard.inline_keyboard.append([InlineKeyboardButton(text=topic, callback_data=f"topic_{level}_{topic}")])
-            await callback.message.reply(f"📚 *Уровень {level}*\n\nВыбери тему:", parse_mode="Markdown", reply_markup=keyboard)
+    if callback.data.startswith("lesson_"):
+        lesson_id = callback.data.split("_")[1]
+        lesson = LESSONS.get(lesson_id)
+        if lesson:
+            # Удаляем сообщение с кнопками
+            await callback.message.delete()
+            # Отправляем урок
+            await callback.message.reply(
+                lesson["content"],
+                parse_mode="Markdown",
+                reply_markup=back_to_lessons_menu()
+            )
         else:
-            await callback.message.reply("📚 *Уроки для этого уровня скоро появятся!*", parse_mode="Markdown")
+            await callback.message.reply("❌ Урок не найден.")
         await callback.answer()
         return
 
-    if callback.data.startswith("topic_"):
-        parts = callback.data.split("_")
-        level = parts[1]
-        topic = parts[2]
-        lesson = LESSONS.get(level, {}).get(topic)
-        if not lesson:
-            await callback.message.reply("❌ Урок не найден.")
-            await callback.answer()
-            return
-        text = f"📚 *{topic} ({level})*\n\n"
-        text += "📝 *Слова:*\n"
-        for w in lesson["words"]:
-            text += f"• {w['en']} — {w['ru']}\n"
-        text += f"\n📖 *Текст:*\n{lesson['text']}\n\n"
-        text += "❓ *Вопросы:*\n"
-        for i, q in enumerate(lesson["questions"], 1):
-            text += f"{i}. {q['q']}\n"
-        await callback.message.reply(text, parse_mode="Markdown")
+    if callback.data == "back_to_lessons":
+        await callback.message.delete()
+        await callback.message.reply("📚 *Выберите урок:*", parse_mode="Markdown", reply_markup=lessons_menu())
         await callback.answer()
         return
 
