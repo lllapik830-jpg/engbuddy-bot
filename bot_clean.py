@@ -15,6 +15,7 @@ from flask import Flask
 import threading
 import time
 from datetime import date
+import difflib
 
 app = Flask(__name__)
 
@@ -58,6 +59,16 @@ def is_premium(user_id):
     user_data = users.get(user_id, {})
     premium_until = user_data.get("premium_until", 0)
     return time.time() < premium_until
+
+def clear_grammar_state(user_id):
+    users = load_users()
+    if user_id in users:
+        users[user_id]["grammar_exercises"] = []
+        users[user_id]["grammar_current"] = 0
+        users[user_id]["grammar_phase"] = "write"
+        users[user_id]["grammar_attempt"] = 0
+        users[user_id]["grammar_topic"] = ""
+        save_users(users)
 
 def get_system_prompt(user_name="Student", level="A1"):
     return (
@@ -384,6 +395,7 @@ async def start_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
+        clear_grammar_state(user_id)
         user_data = users[user_id]
         if user_data.get("name") is None:
             user_data["step"] = "name"
@@ -410,6 +422,7 @@ async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
+        clear_grammar_state(user_id)
         premium_until = users[user_id].get("premium_until", 0)
         del users[user_id]
         users[user_id] = {
@@ -435,6 +448,7 @@ async def upgrade_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
+    clear_grammar_state(user_id)
     await m.reply(
         "💎 *Выберите подписку:*\n\n"
         "🔹 Безлимит (399 ₽) — голосовые без ограничений + исправление ошибок\n"
@@ -451,6 +465,7 @@ async def lesson_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
+    clear_grammar_state(user_id)
     await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=lesson_menu())
 
 @dp.message(Command("buy"))
@@ -460,6 +475,7 @@ async def buy_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
+    clear_grammar_state(user_id)
     await m.reply(
         f"💎 *Как купить подписку:*\n\n"
         f"1️⃣ Переведите нужную сумму на карту:\n"
@@ -484,6 +500,7 @@ async def activate_cmd(m: Message):
     if target_user_id not in users:
         await m.reply(f"❌ Пользователь с ID {target_user_id} не найден.")
         return
+    clear_grammar_state(target_user_id)
     users[target_user_id]["premium_until"] = time.time() + 30 * 24 * 60 * 60
     save_users(users)
     await m.reply(f"✅ Подписка активирована для пользователя {target_user_id}!")
@@ -516,6 +533,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data == "buy_base" or callback.data == "buy_premium":
+        clear_grammar_state(user_id)
         price = "399 ₽" if callback.data == "buy_base" else "799 ₽"
         await callback.message.reply(
             f"💎 *Вы выбрали подписку за {price}*\n\n"
@@ -528,6 +546,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("level_"):
+        clear_grammar_state(user_id)
         level = callback.data.split("_")[1]
         user_data["current_level"] = level
         save_users(users)
@@ -536,6 +555,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("section_"):
+        clear_grammar_state(user_id)
         parts = callback.data.split("_")
         level = parts[1]
         section = parts[2]
@@ -604,6 +624,7 @@ async def handle_callback(callback: CallbackQuery):
             return
 
     if callback.data.startswith("grammar_"):
+        clear_grammar_state(user_id)
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
@@ -620,6 +641,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("exercise_start_"):
+        clear_grammar_state(user_id)
         parts = callback.data.split("_")
         level = parts[2]
         topic = parts[3]
@@ -650,6 +672,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("level_back_"):
+        clear_grammar_state(user_id)
         level = callback.data.split("_")[2]
         await callback.message.reply(level_intro(level), parse_mode="Markdown", reply_markup=level_menu(level))
         await callback.answer()
@@ -698,15 +721,12 @@ async def check_grammar_answer(m: Message):
     correct_answer = exercises[idx]["answer"].strip().lower()
     user_answer = m.text.strip().lower()
 
-    # --- ЭТАП 1: ПРОВЕРКА ПИСЬМЕННОГО ОТВЕТА ---
     if phase == "write":
         if user_answer == correct_answer:
-            # Правильно → переходим к этапу произношения
             user_data["grammar_phase"] = "speak"
             user_data["grammar_attempt"] = 0
             save_users(users)
             await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
-            # Произносим всю фразу
             full_sentence = exercises[idx]["text"].replace("____", correct_answer)
             audio_bytes = elevenlabs_tts(full_sentence)
             if audio_bytes:
@@ -754,9 +774,8 @@ async def check_grammar_answer(m: Message):
                 await m.reply("❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
                 return False
 
-    # --- ЭТАП 2: ПРОВЕРКА ГОЛОСОВОГО ---
     elif phase == "speak":
-        return True  # голосовое обрабатывается в catch_all
+        return True
 
     return False
 
@@ -790,11 +809,12 @@ async def check_grammar_voice(m: Message):
         await m.reply("❌ Не удалось распознать речь. Попробуй ещё раз, говори чётче.")
         return False
 
-    # Сравниваем с правильной фразой (убираем лишние пробелы, приводим к нижнему регистру)
     user_phrase = text.lower().strip()
     correct_phrase = full_sentence.lower().strip()
 
-    if user_phrase == correct_phrase:
+    similarity = difflib.SequenceMatcher(None, user_phrase, correct_phrase).ratio()
+
+    if similarity >= 0.8:
         await m.reply("✅ *Отлично! Ты правильно произнёс фразу!* 🎉")
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
@@ -802,14 +822,28 @@ async def check_grammar_voice(m: Message):
         await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
         return True
     else:
-        # Ищем, что не так
-        await m.reply(
-            f"❌ *Ты произнёс:*\n`{text}`\n\n"
-            f"✅ *Правильно:*\n`{full_sentence}`\n\n"
-            "Попробуй ещё раз. Отправь голосовое снова.",
-            parse_mode="Markdown"
-        )
-        return False
+        attempt = user_data.get("grammar_attempt", 0) + 1
+        user_data["grammar_attempt"] = attempt
+        save_users(users)
+
+        if attempt >= 2:
+            await m.reply(
+                f"❌ *Ты произнёс:*\n`{text}`\n\n"
+                f"✅ *Правильно:*\n`{full_sentence}`\n\n"
+                "Попробуй ещё раз. Отправь голосовое снова.",
+                parse_mode="Markdown"
+            )
+            user_data["grammar_attempt"] = 0
+            save_users(users)
+            return False
+        else:
+            await m.reply(
+                f"❌ *Ты произнёс:*\n`{text}`\n\n"
+                f"✅ *Правильно:*\n`{full_sentence}`\n\n"
+                "Попробуй ещё раз. Отправь голосовое снова.",
+                parse_mode="Markdown"
+            )
+            return False
 
 @dp.message()
 async def catch_all(m: Message):
@@ -823,36 +857,31 @@ async def catch_all(m: Message):
     user_name = users.get(user_id, {}).get("name", "Unknown")
     logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
 
-    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: голос ---
-    if m.voice and user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "speak":
-        await check_grammar_voice(m)
-        return
-
-    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: текст ---
-    if user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "write":
-        if m.text and not m.text.startswith("/"):
-            await check_grammar_answer(m)
-            return
-
     if m.text == "🗣️ Общаться":
+        clear_grammar_state(user_id)
         await m.reply("🗣️ *Я готов!* Отправь мне текст или голосовое сообщение.", parse_mode="Markdown", reply_markup=main_menu())
         return
     if m.text == "📖 Уроки":
+        clear_grammar_state(user_id)
         await lesson_cmd(m)
         return
     if m.text == "💎 Подписка":
+        clear_grammar_state(user_id)
         await upgrade_cmd(m)
         return
     if m.text == "📊 Прогресс":
+        clear_grammar_state(user_id)
         if is_premium(user_id):
             await m.reply("📊 *Твой прогресс:*\n\n✅ Премиум активен\n📚 Уроков пройдено: 0\n🎯 Следующий уровень: A1", parse_mode="Markdown", reply_markup=main_menu())
         else:
             await m.reply("📊 *Ты на бесплатном тарифе.*\n\n🎤 Осталось голосовых на сегодня: 20\n💎 Купи подписку, чтобы снять лимиты.", parse_mode="Markdown", reply_markup=main_menu())
         return
     if m.text == "🔄 Сброс":
+        clear_grammar_state(user_id)
         await reset_cmd(m)
         return
     if m.text == "❓ Помощь":
+        clear_grammar_state(user_id)
         await m.reply(
             "❓ *Как пользоваться ботом:*\n\n"
             "1️⃣ Зарегистрируйся через /start\n"
@@ -865,6 +894,17 @@ async def catch_all(m: Message):
             reply_markup=main_menu()
         )
         return
+
+    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: голос ---
+    if m.voice and user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "speak":
+        await check_grammar_voice(m)
+        return
+
+    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: текст ---
+    if user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "write":
+        if m.text and not m.text.startswith("/"):
+            await check_grammar_answer(m)
+            return
 
     if step == "name":
         user_data["name"] = m.text.strip()
@@ -950,7 +990,7 @@ async def catch_all(m: Message):
             await m.reply("❌ Напиши **цифру** (например, 5).")
             return
 
-    # --- ОБЫЧНОЕ ОБЩЕНИЕ (если не в задании) ---
+    # --- ОБЫЧНОЕ ОБЩЕНИЕ ---
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
         answer_en = ask_gpt(m.text, user_name, level)
