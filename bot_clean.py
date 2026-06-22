@@ -150,7 +150,7 @@ def format_bilingual_response(text_en, lang):
     return "\n\n".join(parts)
 
 def main_menu():
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🗣️ Общаться"), KeyboardButton(text="📖 Уроки")],
             [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="📊 Прогресс")],
@@ -158,7 +158,6 @@ def main_menu():
         ],
         resize_keyboard=True
     )
-    return keyboard
 
 def subscription_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -174,14 +173,13 @@ def translate_keyboard(lang="Russian"):
     ])
 
 def lesson_menu():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="A1", callback_data="level_A1")],
         [InlineKeyboardButton(text="A2", callback_data="level_A2")],
         [InlineKeyboardButton(text="B1", callback_data="level_B1")],
         [InlineKeyboardButton(text="B2", callback_data="level_B2")],
         [InlineKeyboardButton(text="C1", callback_data="level_C1")]
     ])
-    return keyboard
 
 def level_intro(level):
     if level == "A1":
@@ -191,7 +189,7 @@ def level_intro(level):
             "🧩 *Что ты освоишь на этом уровне:*\n"
             "🔤 Алфавит и звуки — научишься читать любые слова с первого взгляда.\n"
             "🔢 Цифры и даты — сможешь называть цены, время и свой возраст.\n"
-            "📚 Грамматика — поймёшь, как устроены простые предложения: «Я — Данил», «Я иду», «Я могу».\n"
+            "📚 Грамматика — поймёшь, как устроены простые предложения.\n"
             "🗣️ Словарный запас — освоишь 500+ слов на тему: семья, еда, дом, работа, одежда, погода.\n"
             "🎯 Вопросы и приветствия — научишься знакомиться, спрашивать и отвечать.\n\n"
             "👇 *Куда идём?*"
@@ -199,7 +197,7 @@ def level_intro(level):
     return f"📚 *Уровень {level}*\n\nВыбери раздел для изучения:"
 
 def level_menu(level):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔤 Алфавит", callback_data=f"section_{level}_alphabet")],
         [InlineKeyboardButton(text="🔢 Цифры", callback_data=f"section_{level}_numbers")],
         [InlineKeyboardButton(text="📚 Грамматика", callback_data=f"section_{level}_grammar")],
@@ -208,17 +206,15 @@ def level_menu(level):
         [InlineKeyboardButton(text="🎧 Аудирование", callback_data=f"section_{level}_listening")],
         [InlineKeyboardButton(text="💬 Общение", callback_data=f"section_{level}_speaking")]
     ])
-    return keyboard
 
 def grammar_submenu(level):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧩 Глагол to be", callback_data=f"grammar_{level}_tobe")],
         [InlineKeyboardButton(text="🔄 Present Simple", callback_data=f"grammar_{level}_presentsimple")],
         [InlineKeyboardButton(text="📍 Предлоги", callback_data=f"grammar_{level}_prepositions")],
         [InlineKeyboardButton(text="❓ Вопросы и приветствия", callback_data=f"grammar_{level}_questions")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"level_back_{level}")]
     ])
-    return keyboard
 
 def generate_lesson_data(level, topic, user_name):
     prompt = f"""
@@ -254,6 +250,78 @@ def generate_lesson_data(level, topic, user_name):
     except Exception as e:
         logging.error(f"Lesson generation error: {e}")
         return None
+
+def section_content(level, section):
+    if section == "alphabet":
+        return (
+            "🔤 *Алфавит (Alphabet)*\n\n"
+            "A - [eɪ]\nB - [biː]\nC - [siː]\nD - [diː]\nE - [iː]\n"
+            "F - [ɛf]\nG - [dʒiː]\nH - [eɪtʃ]\nI - [aɪ]\nJ - [dʒeɪ]\n"
+            "K - [keɪ]\nL - [ɛl]\nM - [ɛm]\nN - [ɛn]\nO - [oʊ]\n"
+            "P - [piː]\nQ - [kjuː]\nR - [ɑːr]\nS - [ɛs]\nT - [tiː]\n"
+            "U - [juː]\nV - [viː]\nW - [ˈdʌbəljuː]\nX - [ɛks]\nY - [waɪ]\nZ - [ziː]\n\n"
+            "📢 Скажи боту «Произнеси», чтобы услышать любую букву."
+        )
+    elif section == "numbers":
+        return (
+            "🔢 *Цифры (Numbers)*\n\n"
+            "1 - one [wʌn]\n2 - two [tuː]\n3 - three [θriː]\n4 - four [fɔːr]\n"
+            "5 - five [faɪv]\n6 - six [sɪks]\n7 - seven [ˈsɛvən]\n8 - eight [eɪt]\n"
+            "9 - nine [naɪn]\n10 - ten [tɛn]\n\n"
+            "📢 Скажи боту «Произнеси число X», чтобы услышать произношение."
+        )
+    elif section == "tobe":
+        return (
+            "🧩 *Глагол to be (настоящее время)*\n\n"
+            "I am — я есть / я являюсь\nYou are — ты есть\nHe/She/It is — он/она/оно есть\nWe are — мы есть\nThey are — они есть\n\n"
+            "✅ *Примеры:*\nI am Danil.\nShe is a student.\nWe are friends.\n\n"
+            "📢 Скажи боту «Произнеси пример», чтобы услышать голос."
+        )
+    elif section == "presentsimple":
+        return (
+            "🔄 *Present Simple (настоящее простое)*\n\n"
+            "Используется для:\n"
+            "• Фактов (The sun rises in the east)\n"
+            "• Привычек (I drink coffee every morning)\n"
+            "• Расписаний (The train leaves at 8 pm)\n\n"
+            "📌 *Формула:*\n"
+            "I/You/We/They + глагол\n"
+            "He/She/It + глагол + s\n\n"
+            "❌ *Отрицание:* don't / doesn't\n"
+            "❓ *Вопрос:* Do / Does\n\n"
+            "✅ *Примеры:*\nI work in an office.\nShe works from home.\nDo you like music?"
+        )
+    elif section == "prepositions":
+        return (
+            "📍 *Предлоги (Prepositions)*\n\n"
+            "🕒 *Время:*\n"
+            "• at 5 o'clock, at night\n"
+            "• on Monday, on July 5th\n"
+            "• in May, in summer, in 2025\n\n"
+            "📍 *Место:*\n"
+            "• in the room, in Russia\n"
+            "• on the table, on the street\n"
+            "• at home, at work\n\n"
+            "✅ *Примеры:*\nI wake up at 7 am.\nShe is in the kitchen.\nWe meet on Friday."
+        )
+    elif section == "questions":
+        return (
+            "❓ *Вопросы и приветствия*\n\n"
+            "👋 *Приветствия:*\n"
+            "Hello! / Hi! — Привет!\n"
+            "Good morning! — Доброе утро!\n"
+            "How are you? — Как дела?\n\n"
+            "❓ *Вопросы:*\n"
+            "What is your name? — Как тебя зовут?\n"
+            "Where are you from? — Откуда ты?\n"
+            "How old are you? — Сколько тебе лет?\n"
+            "What do you do? — Чем ты занимаешься?\n\n"
+            "💬 *Пример диалога:*\n"
+            "- Hello! What is your name?\n"
+            "- My name is Danil.\n"
+            "- Nice to meet you, Danil!"
+        )
+    return f"📚 *Раздел «{section}» для уровня {level}*\n\nСкоро здесь появится контент! 🚀"
 
 @dp.message(Command("start"))
 async def start_cmd(m: Message):
@@ -392,6 +460,12 @@ async def handle_callback(callback: CallbackQuery):
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
 
+    # Удаляем предыдущее сообщение с кнопками, чтобы не захламлять чат
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
         if translation:
@@ -399,6 +473,7 @@ async def handle_callback(callback: CallbackQuery):
         else:
             await callback.message.reply("❌ Перевод не найден.")
         await callback.answer()
+        return
 
     elif callback.data == "buy_base" or callback.data == "buy_premium":
         price = "399 ₽" if callback.data == "buy_base" else "799 ₽"
@@ -410,6 +485,7 @@ async def handle_callback(callback: CallbackQuery):
             parse_mode="Markdown"
         )
         await callback.answer()
+        return
 
     elif callback.data.startswith("level_"):
         level = callback.data.split("_")[1]
@@ -417,6 +493,7 @@ async def handle_callback(callback: CallbackQuery):
         save_users(users)
         await callback.message.reply(level_intro(level), parse_mode="Markdown", reply_markup=level_menu(level))
         await callback.answer()
+        return
 
     elif callback.data.startswith("section_"):
         parts = callback.data.split("_")
@@ -425,20 +502,30 @@ async def handle_callback(callback: CallbackQuery):
         if section == "grammar":
             await callback.message.reply("📚 *Выбери тему по грамматике:*", parse_mode="Markdown", reply_markup=grammar_submenu(level))
             await callback.answer()
+            return
         else:
-            await callback.message.reply(f"📚 *Раздел «{section}» для уровня {level}*\n\nЭтот раздел в разработке. Скоро он появится! 🚀", parse_mode="Markdown")
+            content = section_content(level, section)
+            await callback.message.reply(content, parse_mode="Markdown")
             await callback.answer()
+            return
 
     elif callback.data.startswith("grammar_"):
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
-        await callback.message.reply(f"📚 *Грамматика: {topic} ({level})*\n\nЭтот урок в разработке. Скоро он появится! 🚀", parse_mode="Markdown")
+        content = section_content(level, topic)
+        await callback.message.reply(content, parse_mode="Markdown")
         await callback.answer()
+        return
 
     elif callback.data.startswith("level_back_"):
         level = callback.data.split("_")[2]
         await callback.message.reply(level_intro(level), parse_mode="Markdown", reply_markup=level_menu(level))
+        await callback.answer()
+        return
+
+    else:
+        await callback.message.reply("⚠️ Неизвестная команда.")
         await callback.answer()
 
 @dp.message()
