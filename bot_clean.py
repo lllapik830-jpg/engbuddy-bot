@@ -251,16 +251,51 @@ def generate_lesson_data(level, topic, user_name):
         logging.error(f"Lesson generation error: {e}")
         return None
 
+def generate_tobe_exercises(level, user_name):
+    prompt = f"""
+    Generate 4 English sentences for level {level} with gaps (____) where the student must fill in the correct form of the verb TO BE (am, is, are).
+    Student's name is {user_name}.
+    Return ONLY a JSON object with the following structure:
+    {{
+        "sentences": [
+            {{"text": "I ____ a student.", "answer": "am"}},
+            {{"text": "She ____ my friend.", "answer": "is"}},
+            {{"text": "We ____ happy.", "answer": "are"}},
+            {{"text": "They ____ at home.", "answer": "are"}}
+        ]
+    }}
+    Do not include any other text, only the JSON.
+    """
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 800
+            },
+            timeout=30
+        )
+        content = response.json()["choices"][0]["message"]["content"]
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
+    except Exception as e:
+        logging.error(f"Tobe exercises error: {e}")
+        return None
+
 def section_content(level, section):
     if section == "alphabet":
         return (
             "🔤 *Алфавит (Alphabet)*\n\n"
-            "A - [eɪ]\nB - [biː]\nC - [siː]\nD - [diː]\nE - [iː]\n"
-            "F - [ɛf]\nG - [dʒiː]\nH - [eɪtʃ]\nI - [aɪ]\nJ - [dʒeɪ]\n"
-            "K - [keɪ]\nL - [ɛl]\nM - [ɛm]\nN - [ɛn]\nO - [oʊ]\n"
-            "P - [piː]\nQ - [kjuː]\nR - [ɑːr]\nS - [ɛs]\nT - [tiː]\n"
-            "U - [juː]\nV - [viː]\nW - [ˈdʌbəljuː]\nX - [ɛks]\nY - [waɪ]\nZ - [ziː]\n\n"
-            "📢 Скажи боту «Произнеси», чтобы услышать любую букву."
+            "A - eɪ\nB - biː\nC - siː\nD - diː\nE - iː\n"
+            "F - ɛf\nG - dʒiː\nH - eɪtʃ\nI - aɪ\nJ - dʒeɪ\n"
+            "K - keɪ\nL - ɛl\nM - ɛm\nN - ɛn\nO - oʊ\n"
+            "P - piː\nQ - kjuː\nR - ɑːr\nS - ɛs\nT - tiː\n"
+            "U - juː\nV - viː\nW - ˈdʌbəljuː\nX - ɛks\nY - waɪ\nZ - ziː\n\n"
+            "👇 *Напиши любую букву, и я произнесу её голосом!*"
         )
     elif section == "numbers":
         return (
@@ -268,14 +303,28 @@ def section_content(level, section):
             "1 - one [wʌn]\n2 - two [tuː]\n3 - three [θriː]\n4 - four [fɔːr]\n"
             "5 - five [faɪv]\n6 - six [sɪks]\n7 - seven [ˈsɛvən]\n8 - eight [eɪt]\n"
             "9 - nine [naɪn]\n10 - ten [tɛn]\n\n"
-            "📢 Скажи боту «Произнеси число X», чтобы услышать произношение."
+            "👇 *Напиши цифру от 1 до 10, и я произнесу её голосом!*"
         )
     elif section == "tobe":
         return (
-            "🧩 *Глагол to be (настоящее время)*\n\n"
-            "I am — я есть / я являюсь\nYou are — ты есть\nHe/She/It is — он/она/оно есть\nWe are — мы есть\nThey are — они есть\n\n"
-            "✅ *Примеры:*\nI am Danil.\nShe is a student.\nWe are friends.\n\n"
-            "📢 Скажи боту «Произнеси пример», чтобы услышать голос."
+            "🧩 *Глагол to be — основа английского!*\n\n"
+            "Это самый важный глагол в языке. Он означает «быть», «являться», «находиться».\n\n"
+            "📌 *Формы в настоящем времени:*\n"
+            "• I **am** — я есть / я являюсь\n"
+            "• You **are** — ты есть / вы есть\n"
+            "• He/She/It **is** — он/она/оно есть\n"
+            "• We **are** — мы есть\n"
+            "• They **are** — они есть\n\n"
+            "💡 *Запомни:*\n"
+            "Am → только для I\n"
+            "Is → для he, she, it\n"
+            "Are → для you, we, they\n\n"
+            "✅ *Примеры:*\n"
+            "• I am Danil.\n"
+            "• She is my sister.\n"
+            "• We are friends.\n"
+            "• They are at home.\n\n"
+            "👇 *Теперь попробуй сам!*"
         )
     elif section == "presentsimple":
         return (
@@ -490,6 +539,18 @@ async def handle_callback(callback: CallbackQuery):
         elif section in ["alphabet", "numbers"]:
             content = section_content(level, section)
             await callback.message.reply(content, parse_mode="Markdown")
+            user_data["last_section"] = section
+            save_users(users)
+            await callback.answer()
+            return
+        elif section == "tobe":
+            content = section_content(level, section)
+            await callback.message.reply(content, parse_mode="Markdown")
+            # Кнопка "Начать задание"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📝 Задание", callback_data=f"tobe_exercise_start_{level}")]
+            ])
+            await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
             await callback.answer()
             return
         elif section in ["vocabulary", "reading", "listening", "speaking"]:
@@ -539,6 +600,34 @@ async def handle_callback(callback: CallbackQuery):
         topic = parts[2]
         content = section_content(level, topic)
         await callback.message.reply(content, parse_mode="Markdown")
+        if topic == "tobe":
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📝 Задание", callback_data=f"tobe_exercise_start_{level}")]
+            ])
+            await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
+        await callback.answer()
+        return
+
+    if callback.data.startswith("tobe_exercise_start_"):
+        level = callback.data.split("_")[3]
+        user_data["tobe_exercises"] = []
+        user_data["tobe_current"] = 0
+        exercises_data = generate_tobe_exercises(level, user_name)
+        if exercises_data and "sentences" in exercises_data:
+            user_data["tobe_exercises"] = exercises_data["sentences"]
+            save_users(users)
+            await send_next_tobe_exercise(callback.message, user_id)
+        else:
+            await callback.message.reply("❌ Не удалось сгенерировать задания. Попробуйте позже.")
+        await callback.answer()
+        return
+
+    if callback.data.startswith("tobe_next_"):
+        user_data = users.get(user_id, {})
+        idx = user_data.get("tobe_current", 0) + 1
+        user_data["tobe_current"] = idx
+        save_users(users)
+        await send_next_tobe_exercise(callback.message, user_id)
         await callback.answer()
         return
 
@@ -550,6 +639,85 @@ async def handle_callback(callback: CallbackQuery):
 
     await callback.message.reply("⚠️ Неизвестная команда.")
     await callback.answer()
+
+async def send_next_tobe_exercise(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    exercises = user_data.get("tobe_exercises", [])
+    idx = user_data.get("tobe_current", 0)
+
+    if idx >= len(exercises):
+        await message.reply(
+            "🎉 *Отлично! Ты справился со всеми заданиями!*\n\n"
+            "Ты отлично усвоил глагол to be. Теперь ты готов двигаться дальше! 💪",
+            parse_mode="Markdown"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{user_data.get('current_level', 'A1')}")]
+        ])
+        await message.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
+        return
+
+    exercise = exercises[idx]
+    text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильную форму глагола to be (am, is, are):_"
+    await message.reply(text, parse_mode="Markdown")
+
+async def check_tobe_answer(m: Message):
+    user_id = str(m.from_user.id)
+    users = load_users()
+    user_data = users.get(user_id, {})
+    exercises = user_data.get("tobe_exercises", [])
+    idx = user_data.get("tobe_current", 0)
+
+    if idx >= len(exercises):
+        return False
+
+    correct_answer = exercises[idx]["answer"].strip().lower()
+    user_answer = m.text.strip().lower()
+
+    if user_answer == correct_answer:
+        await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
+        # Произносим правильный ответ
+        audio_bytes = elevenlabs_tts(correct_answer)
+        if audio_bytes:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                    tmp.write(audio_bytes)
+                    path = tmp.name
+                await m.reply_voice(FSInputFile(path))
+                os.unlink(path)
+            except Exception as e:
+                logging.error(f"TTS error: {e}")
+        # Кнопка "Дальше"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"tobe_next_{idx}")]
+        ])
+        await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
+        return True
+    else:
+        await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
+        # Произносим правильный ответ
+        audio_bytes = elevenlabs_tts(correct_answer)
+        if audio_bytes:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                    tmp.write(audio_bytes)
+                    path = tmp.name
+                await m.reply_voice(FSInputFile(path))
+                os.unlink(path)
+            except Exception as e:
+                logging.error(f"TTS error: {e}")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"tobe_retry_{idx}")]
+        ])
+        await m.reply("👇 *Попробуй ещё раз.*", parse_mode="Markdown", reply_markup=keyboard)
+        return False
+
+@dp.callback_query()
+async def handle_tobe_retry(callback: CallbackQuery):
+    if callback.data.startswith("tobe_retry_"):
+        await callback.message.reply("✍️ *Напиши правильную форму глагола to be (am, is, are):*", parse_mode="Markdown")
+        await callback.answer()
 
 @dp.message()
 async def catch_all(m: Message):
@@ -627,6 +795,63 @@ async def catch_all(m: Message):
     user_name = user_data["name"]
     lang = user_data["language"]
     level = user_data.get("level", "A1")
+    last_section = user_data.get("last_section", "")
+
+    # --- АЛФАВИТ ---
+    if last_section == "alphabet" and m.text and not m.text.startswith("/"):
+        letter = m.text.strip().upper()
+        if len(letter) == 1 and letter.isalpha():
+            audio_bytes = elevenlabs_tts(letter)
+            if audio_bytes:
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                        tmp.write(audio_bytes)
+                        path = tmp.name
+                    await m.reply_voice(FSInputFile(path))
+                    os.unlink(path)
+                    await m.reply(f"🔊 *Буква {letter}* — произнесена! Попробуй другую букву или выбери другой раздел.", parse_mode="Markdown")
+                except Exception as e:
+                    logging.error(f"TTS error: {e}")
+            else:
+                await m.reply("❌ Не удалось произнести букву. Попробуй другую.")
+            return
+        else:
+            await m.reply("❌ Напиши **одну букву** (например, A, B, C).", parse_mode="Markdown")
+            return
+
+    # --- ЦИФРЫ ---
+    if last_section == "numbers" and m.text and not m.text.startswith("/"):
+        try:
+            number = int(m.text.strip())
+            if 1 <= number <= 10:
+                number_words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+                word = number_words[number - 1]
+                audio_bytes = elevenlabs_tts(word)
+                if audio_bytes:
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(audio_bytes)
+                            path = tmp.name
+                        await m.reply_voice(FSInputFile(path))
+                        os.unlink(path)
+                        await m.reply(f"🔊 *Число {number}* — произнесено! Попробуй другую цифру.", parse_mode="Markdown")
+                    except Exception as e:
+                        logging.error(f"TTS error: {e}")
+                else:
+                    await m.reply("❌ Не удалось произнести число. Попробуй ещё раз.")
+                return
+            else:
+                await m.reply("❌ Напиши цифру **от 1 до 10**.")
+                return
+        except ValueError:
+            await m.reply("❌ Напиши **цифру** (например, 5).")
+            return
+
+    # --- TO BE ЗАДАНИЕ ---
+    if user_data.get("tobe_exercises") and user_data.get("tobe_current") is not None:
+        if m.text and not m.text.startswith("/"):
+            await check_tobe_answer(m)
+            return
 
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
