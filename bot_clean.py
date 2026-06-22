@@ -42,41 +42,8 @@ dp = Dispatcher()
 USER_DATA_FILE = "users.json"
 MANAGER_ID = 1809897303
 
-# --- ВСТРОЕННЫЕ УРОКИ (JSON) ---
-LESSONS = {
-    "A1": {
-        "Family": {
-            "words": [
-                {"en": "mother", "ru": "мама"},
-                {"en": "father", "ru": "папа"},
-                {"en": "sister", "ru": "сестра"},
-                {"en": "brother", "ru": "брат"},
-                {"en": "family", "ru": "семья"}
-            ],
-            "text": "My family is big. I have a mother, a father, a sister and a brother. We are happy.",
-            "questions": [
-                {"q": "Is the family big?", "a": "Yes"},
-                {"q": "Does he have a sister?", "a": "Yes"},
-                {"q": "Does he have a brother?", "a": "Yes"}
-            ]
-        },
-        "Food": {
-            "words": [
-                {"en": "apple", "ru": "яблоко"},
-                {"en": "bread", "ru": "хлеб"},
-                {"en": "milk", "ru": "молоко"},
-                {"en": "egg", "ru": "яйцо"},
-                {"en": "water", "ru": "вода"}
-            ],
-            "text": "I like apples. I eat bread and drink milk every day. Eggs are good for breakfast.",
-            "questions": [
-                {"q": "Does he like apples?", "a": "Yes"},
-                {"q": "Does he drink milk?", "a": "Yes"},
-                {"q": "Are eggs good for breakfast?", "a": "Yes"}
-            ]
-        }
-    }
-}
+# --- УРОКИ (пока пусто, заполнишь позже) ---
+LESSONS = {}
 
 def load_users():
     try:
@@ -231,22 +198,29 @@ async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
+        name = users[user_id].get("name", "Student")
+        language = users[user_id].get("language", "Russian")
         premium_until = users[user_id].get("premium_until", 0)
-        del users[user_id]
         users[user_id] = {
-            "name": None,
-            "language": None,
+            "name": name,
+            "language": language,
             "level": "A1",
-            "step": "name",
+            "step": "ready",
             "premium_until": premium_until,
             "lessons_done": 0,
-            "words_learned": 0
+            "words_learned": 0,
+            "voice_count": 0,
+            "voice_date": date.today().isoformat()
         }
         save_users(users)
         await m.reply(
-            "🔄 Данные сброшены.\n"
-            "Ваша подписка сохранена ✅\n"
-            "Используйте /start, чтобы начать заново."
+            f"🔄 *Данные сброшены.*\n"
+            f"Твои регистрационные данные сохранены ✅\n"
+            f"Имя: {name}\n"
+            f"Язык: {language}\n\n"
+            "Прогресс (уроки и слова) обнулён. Подписка активна.",
+            parse_mode="Markdown",
+            reply_markup=main_menu()
         )
     else:
         await m.reply("❌ Нет данных для сброса.")
@@ -284,6 +258,15 @@ async def lesson_cmd(m: Message):
             parse_mode="Markdown"
         )
         return
+    
+    if not LESSONS:
+        await m.reply(
+            "📚 *Уроки скоро появятся!*\n\n"
+            "Я добавляю новые материалы каждый день. Загляни позже! 🚀",
+            parse_mode="Markdown"
+        )
+        return
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="A1", callback_data="level_A1")],
         [InlineKeyboardButton(text="A2", callback_data="level_A2")],
@@ -464,7 +447,8 @@ async def catch_all(m: Message):
         user_data["language"] = m.text.strip()
         user_data["step"] = "ready"
         save_users(users)
-        await m.reply(
+        
+        text_en = (
             f"✅ *Registration complete, {user_data['name']}!*\n\n"
             f"🌐 Language: {user_data['language']}\n\n"
             "🎯 *What I can do:*\n"
@@ -473,10 +457,25 @@ async def catch_all(m: Message):
             "• 🔊 Reply with real human-like voice\n"
             "• 📚 Help with grammar and speaking\n\n"
             "💎 20 free voice messages per day.\n"
-            "Use /upgrade to unlock unlimited access!",
-            parse_mode="Markdown",
-            reply_markup=main_menu()
+            "Use /upgrade to unlock unlimited access!\n\n"
+            "👇 *Choose what you want to do using the buttons below.*"
         )
+        
+        text_ru = (
+            f"✅ *Регистрация завершена, {user_data['name']}!*\n\n"
+            f"🌐 Язык: {user_data['language']}\n\n"
+            "🎯 *Что я умею:*\n"
+            "• 💬 Общаться на английском с переводом\n"
+            "• 🎤 Слушать голосовые сообщения и отвечать\n"
+            "• 🔊 Отвечать голосом (живой, человеческий голос!)\n"
+            "• 📚 Помогать с грамматикой и разговорной речью\n\n"
+            "💎 20 бесплатных голосовых сообщений в день.\n"
+            "Используй /upgrade, чтобы снять лимиты!\n\n"
+            "👇 *Выбери, чем хочешь заняться, с помощью кнопок ниже.*"
+        )
+        
+        await m.reply(text_en, parse_mode="Markdown", reply_markup=main_menu())
+        await m.reply(text_ru, parse_mode="Markdown")
         return
 
     user_name = user_data["name"]
