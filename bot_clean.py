@@ -16,19 +16,19 @@ import threading
 import time
 from datetime import date
 
-# --- Flask keep_alive (для Render) ---
 app = Flask(__name__)
+
 @app.route('/')
 def home():
     return "🤖 LexDAN — AI English Tutor is running!"
+
 def keep_alive():
     app.run(host='0.0.0.0', port=8080)
+
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- Логирование ---
 logging.basicConfig(level=logging.INFO)
 
-# --- Ключи ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -40,11 +40,8 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 USER_DATA_FILE = "users.json"
+MANAGER_ID = 1809897303
 
-# --- ID менеджера (ЗАМЕНИ НА СВОЙ) ---
-MANAGER_ID = 1809897303  # СЮДА ВСТАВЬ СВОЙ ID
-
-# --- Функции работы с пользователями ---
 def load_users():
     try:
         with open(USER_DATA_FILE, "r") as f:
@@ -62,7 +59,6 @@ def is_premium(user_id):
     premium_until = user_data.get("premium_until", 0)
     return time.time() < premium_until
 
-# --- Системный промпт ---
 def get_system_prompt(user_name="Student", level="A1"):
     return (
         f"You are a strict but friendly English tutor named LexDAN. "
@@ -83,7 +79,7 @@ def ask_gpt(prompt, user_name="Student", level="A1"):
                     {"role": "system", "content": get_system_prompt(user_name, level)},
                     {"role": "user", "content": prompt}
                 ],
-                "max_tokens": 80
+                "max_tokens": 150
             },
             timeout=15
         )
@@ -138,7 +134,6 @@ def elevenlabs_tts(text):
         logging.error(f"ElevenLabs error: {e}")
         return None
 
-# --- Перевод с построчным разбором ---
 def format_bilingual_response(text_en, lang):
     if not lang or lang.lower() == "english":
         return f"🇬🇧 {text_en}"
@@ -154,11 +149,10 @@ def format_bilingual_response(text_en, lang):
             parts.append(f"🇬🇧 {sent}")
     return "\n\n".join(parts)
 
-# --- Клавиатуры ---
 def main_menu():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🗣️ Общаться"), KeyboardButton(text="📖 Урок")],
+            [KeyboardButton(text="🗣️ Общаться"), KeyboardButton(text="📖 Уроки")],
             [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="📊 Прогресс")],
             [KeyboardButton(text="🔄 Сброс"), KeyboardButton(text="❓ Помощь")]
         ],
@@ -167,63 +161,97 @@ def main_menu():
     return keyboard
 
 def subscription_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="💎 Безлимит (399 ₽)", callback_data="buy_base"),
             InlineKeyboardButton(text="👑 Премиум (799 ₽)", callback_data="buy_premium")
         ]
     ])
-    return keyboard
 
 def translate_keyboard(lang="Russian"):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"📖 Перевести на {lang}", callback_data="translate")]
+    ])
+
+# --- МЕНЮ УРОКОВ ---
+def lesson_menu():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="A1", callback_data="level_A1")],
+        [InlineKeyboardButton(text="A2", callback_data="level_A2")],
+        [InlineKeyboardButton(text="B1", callback_data="level_B1")],
+        [InlineKeyboardButton(text="B2", callback_data="level_B2")],
+        [InlineKeyboardButton(text="C1", callback_data="level_C1")]
     ])
     return keyboard
 
-# --- Команда /start ---
+def topic_menu(level):
+    topics = {
+        "A1": ["Семья", "Еда", "Дом", "Одежда", "Путешествия", "Хобби"],
+        "A2": ["Работа", "Учёба", "Город", "Погода", "Магазины", "Здоровье"],
+        "B1": ["Путешествия", "Работа", "Здоровье", "Технологии", "Образование", "Искусство"],
+        "B2": ["Бизнес", "Психология", "Политика", "Экология", "Наука", "Культура"],
+        "C1": ["Лидерство", "Инновации", "Глобализация", "Философия", "Экономика", "Право"]
+    }
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    for topic in topics.get(level, []):
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text=topic, callback_data=f"topic_{level}_{topic}")])
+    return keyboard
+
+# --- ГЕНЕРАЦИЯ УРОКА ЧЕРЕЗ GPT ---
+def generate_lesson(level, topic, user_name):
+    prompt = f"""
+    Generate a 15-minute English lesson for level {level} on the topic "{topic}".
+    Student's name is {user_name}.
+    Include:
+    - 10 new words with definitions and examples
+    - A short text to read
+    - 3 audio phrases for listening practice
+    - 3 questions for free speaking practice
+    Format: Clear sections with headings: VOCABULARY, READING, LISTENING, SPEAKING.
+    Return only the lesson text.
+    """
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1200
+            },
+            timeout=30
+        )
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.error(f"Lesson generation error: {e}")
+        return None
+
 @dp.message(Command("start"))
 async def start_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
-    
     if user_id in users:
         user_data = users[user_id]
         if user_data.get("name") is None:
             user_data["step"] = "name"
             save_users(users)
-            await m.reply(
-                "🤖 *Hello! I'm LexDAN, your AI English tutor.*\n\n"
-                "📝 *What is your name?*",
-                parse_mode="Markdown"
-            )
+            await m.reply("🤖 *Hello! I'm LexDAN, your AI English tutor.*\n\n📝 *What is your name?*", parse_mode="Markdown")
             return
         if user_data.get("language") is None:
             user_data["step"] = "language"
             save_users(users)
-            await m.reply(
-                "🌐 *What is your native language?*\nType your language (e.g., Russian)",
-                parse_mode="Markdown"
-            )
+            await m.reply("🌐 *What is your native language?*\nType your language (e.g., Russian)", parse_mode="Markdown")
             return
         await m.reply(
-            f"👋 Welcome back, *{user_data['name']}*!\n"
-            f"🌐 Language: *{user_data['language']}*\n\n"
-            "Choose an option:",
+            f"👋 Welcome back, *{user_data['name']}*!\n🌐 Language: *{user_data['language']}*\n\nChoose an option:",
             parse_mode="Markdown",
             reply_markup=main_menu()
         )
         return
-    
     users[user_id] = {"name": None, "language": None, "level": "A1", "step": "name"}
     save_users(users)
-    await m.reply(
-        "🤖 *Hello! I'm LexDAN, your AI English tutor.*\n\n"
-        "📝 *What is your name?*",
-        parse_mode="Markdown"
-    )
+    await m.reply("🤖 *Hello! I'm LexDAN, your AI English tutor.*\n\n📝 *What is your name?*", parse_mode="Markdown")
 
-# --- Команда /reset ---
 @dp.message(Command("reset"))
 async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
@@ -233,7 +261,6 @@ async def reset_cmd(m: Message):
         save_users(users)
         await m.reply("🔄 Reset complete. Use /start to begin again.")
 
-# --- Команда /upgrade ---
 @dp.message(Command("upgrade"))
 async def upgrade_cmd(m: Message):
     user_id = str(m.from_user.id)
@@ -250,7 +277,6 @@ async def upgrade_cmd(m: Message):
         reply_markup=subscription_keyboard()
     )
 
-# --- Команда /lesson ---
 @dp.message(Command("lesson"))
 async def lesson_cmd(m: Message):
     user_id = str(m.from_user.id)
@@ -268,20 +294,8 @@ async def lesson_cmd(m: Message):
             parse_mode="Markdown"
         )
         return
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="A1", callback_data="level_A1")],
-        [InlineKeyboardButton(text="A2", callback_data="level_A2")],
-        [InlineKeyboardButton(text="B1", callback_data="level_B1")],
-        [InlineKeyboardButton(text="B2", callback_data="level_B2")],
-        [InlineKeyboardButton(text="C1", callback_data="level_C1")]
-    ])
-    await m.reply(
-        "📚 *Выбери свой уровень:*",
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
+    await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=lesson_menu())
 
-# --- Команда /buy (инструкция по оплате) ---
 @dp.message(Command("buy"))
 async def buy_cmd(m: Message):
     user_id = str(m.from_user.id)
@@ -292,15 +306,41 @@ async def buy_cmd(m: Message):
     await m.reply(
         f"💎 *Как купить подписку:*\n\n"
         f"1️⃣ Переведите нужную сумму на карту:\n"
-        f"`2200 7008 4716 9702`\n"
-        f"(Получатель: указать позже)\n\n"
-        f"2️⃣ После перевода **напишите сюда** сумму и пришлите скриншот.\n"
+        f"`1234 5678 9012 3456`\n\n"
+        f"2️⃣ После перевода напишите «Оплатил» и пришлите скриншот.\n"
         f"3️⃣ Мы проверим и активируем подписку в течение 5–10 минут.\n\n"
         f"✅ Подписка действует 30 дней.",
         parse_mode="Markdown"
     )
 
-# --- Обработка callback'ов ---
+@dp.message(Command("activate"))
+async def activate_cmd(m: Message):
+    if m.from_user.id != MANAGER_ID:
+        await m.reply("❌ У вас нет прав для этой команды.")
+        return
+    parts = m.text.split()
+    if len(parts) < 2:
+        await m.reply("❌ Укажите ID пользователя: /activate 123456789")
+        return
+    target_user_id = parts[1]
+    users = load_users()
+    if target_user_id not in users:
+        await m.reply(f"❌ Пользователь с ID {target_user_id} не найден.")
+        return
+    users[target_user_id]["premium_until"] = time.time() + 30 * 24 * 60 * 60
+    save_users(users)
+    await m.reply(f"✅ Подписка активирована для пользователя {target_user_id}!")
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"🎉 *Подписка Premium активирована!*\n\n"
+            f"✅ Доступ открыт на 30 дней.\n"
+            f"Наслаждайтесь всеми функциями бота! 🚀",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await m.reply(f"⚠️ Не удалось отправить уведомление пользователю: {e}")
+
 @dp.callback_query()
 async def handle_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
@@ -319,7 +359,7 @@ async def handle_callback(callback: CallbackQuery):
         await callback.message.reply(
             f"💎 *Вы выбрали подписку за {price}*\n\n"
             f"Переведите {price} на карту:\n"
-            f"`2200 7008 4716 9702`\n\n"
+            f"`1234 5678 9012 3456`\n\n"
             f"После перевода пришлите сюда скриншот или напишите «Оплатил».",
             parse_mode="Markdown"
         )
@@ -327,15 +367,39 @@ async def handle_callback(callback: CallbackQuery):
     
     elif callback.data.startswith("level_"):
         level = callback.data.split("_")[1]
+        user_data = users.get(user_id, {})
+        user_data["current_level"] = level
+        save_users(users)
         await callback.message.reply(
-            f"📚 *Ты выбрал уровень {level}.*\n\n"
-            "Скоро здесь будут уроки для этого уровня! 🚀\n"
-            "А пока потренируйся в режиме общения — я помогу тебе с грамматикой и произношением.",
-            parse_mode="Markdown"
+            f"📚 *Ты выбрал уровень {level}.*\n\nТеперь выбери тему:",
+            parse_mode="Markdown",
+            reply_markup=topic_menu(level)
         )
         await callback.answer()
+    
+    elif callback.data.startswith("topic_"):
+        parts = callback.data.split("_")
+        level = parts[1]
+        topic = parts[2]
+        user_data = users.get(user_id, {})
+        user_name = user_data.get("name", "Student")
+        
+        await callback.message.reply(f"⏳ *Генерирую урок на тему «{topic}» ({level})...*\n\nЭто займёт 10–15 секунд.", parse_mode="Markdown")
+        
+        lesson = generate_lesson(level, topic, user_name)
+        if lesson:
+            # Отправляем текстовую часть урока
+            await callback.message.reply(
+                f"📚 *Урок {level} — {topic}*\n\n{lesson}",
+                parse_mode="Markdown"
+            )
+            # Генерация аудио для аудирования (в будущем — 3 фразы из урока)
+            # Пока что просто заглушка
+            await callback.message.reply("🎧 *Аудирование:* отправьте голосовое с ответом на вопрос из урока, и я проверю.")
+        else:
+            await callback.message.reply("❌ Не удалось сгенерировать урок. Попробуйте позже.")
+        await callback.answer()
 
-# --- Основной обработчик сообщений ---
 @dp.message()
 async def catch_all(m: Message):
     user_id = str(m.from_user.id)
@@ -343,19 +407,15 @@ async def catch_all(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    
     user_data = users[user_id]
     step = user_data.get("step", "ready")
-    
-    # --- Логирование ---
     user_name = users.get(user_id, {}).get("name", "Unknown")
     logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
     
-    # --- Кнопки меню ---
     if m.text == "🗣️ Общаться":
         await m.reply("🗣️ *Я готов!* Отправь мне текст или голосовое сообщение.", parse_mode="Markdown", reply_markup=main_menu())
         return
-    if m.text == "📖 Урок":
+    if m.text == "📖 Уроки":
         await lesson_cmd(m)
         return
     if m.text == "💎 Подписка":
@@ -384,7 +444,6 @@ async def catch_all(m: Message):
         )
         return
     
-    # --- Регистрация ---
     if step == "name":
         user_data["name"] = m.text.strip()
         user_data["step"] = "language"
@@ -414,12 +473,10 @@ async def catch_all(m: Message):
         )
         return
     
-    # --- Основная логика ---
     user_name = user_data["name"]
     lang = user_data["language"]
     level = user_data.get("level", "A1")
     
-    # --- Текст ---
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
         answer_en = ask_gpt(m.text, user_name, level)
@@ -438,9 +495,7 @@ async def catch_all(m: Message):
                 logging.error(f"TTS error: {e}")
         return
     
-    # --- Голосовое ---
     if m.voice:
-        # --- Проверка лимита ---
         if not is_premium(user_id):
             today = date.today().isoformat()
             if user_data.get("voice_date") != today:
@@ -458,7 +513,6 @@ async def catch_all(m: Message):
                     reply_markup=keyboard
                 )
                 return
-        
         await m.reply("🎧 Processing voice...")
         try:
             file = await bot.get_file(m.voice.file_id)
@@ -472,11 +526,9 @@ async def catch_all(m: Message):
                 audio_data = recognizer.record(source)
                 text = recognizer.recognize_google(audio_data, language="en-US")
             if text:
-                # --- Увеличиваем счётчик голосовых ---
                 if not is_premium(user_id):
                     user_data["voice_count"] = user_data.get("voice_count", 0) + 1
                     save_users(users)
-                
                 answer_en = ask_gpt(text, user_name, level)
                 answer_ru = translate_to_language(answer_en, lang)
                 user_translations[user_id] = {"translation": answer_ru}
@@ -498,7 +550,6 @@ async def catch_all(m: Message):
             await m.reply("Error processing voice.", reply_markup=main_menu())
         return
 
-# --- Запуск ---
 user_translations = {}
 
 async def main():
