@@ -42,7 +42,6 @@ dp = Dispatcher()
 USER_DATA_FILE = "users.json"
 MANAGER_ID = 1809897303
 
-# --- УРОКИ (пока пусто, заполнишь позже) ---
 LESSONS = {}
 
 def load_users():
@@ -258,7 +257,6 @@ async def lesson_cmd(m: Message):
             parse_mode="Markdown"
         )
         return
-    
     if not LESSONS:
         await m.reply(
             "📚 *Уроки скоро появятся!*\n\n"
@@ -266,7 +264,6 @@ async def lesson_cmd(m: Message):
             parse_mode="Markdown"
         )
         return
-    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="A1", callback_data="level_A1")],
         [InlineKeyboardButton(text="A2", callback_data="level_A2")],
@@ -448,34 +445,31 @@ async def catch_all(m: Message):
         user_data["step"] = "ready"
         save_users(users)
         
-        text_en = (
-            f"✅ *Registration complete, {user_data['name']}!*\n\n"
-            f"🌐 Language: {user_data['language']}\n\n"
-            "🎯 *What I can do:*\n"
-            "• 💬 Chat in English with translation\n"
-            "• 🎤 Listen and reply to voice messages\n"
-            "• 🔊 Reply with real human-like voice\n"
-            "• 📚 Help with grammar and speaking\n\n"
-            "💎 20 free voice messages per day.\n"
-            "Use /upgrade to unlock unlimited access!\n\n"
-            "👇 *Choose what you want to do using the buttons below.*"
+        # --- КРАСОЧНОЕ СООБЩЕНИЕ НА АНГЛИЙСКОМ ---
+        welcome_en = (
+            f"🌟 *Welcome, {user_data['name']}!*\n\n"
+            f"🌐 Your native language: *{user_data['language']}*\n\n"
+            "🎯 *Your AI English tutor is ready to help you:*\n\n"
+            "💬 *Chat in English* — practice anytime, get instant feedback.\n"
+            "🎤 *Voice messages* — speak, listen, and improve your pronunciation.\n"
+            "📚 *Structured lessons* — learn with proven methods, not random topics.\n"
+            "✨ *Grammar check & correction* — I'll fix your mistakes and explain them.\n\n"
+            "🔥 *Why LexDAN?*\n"
+            "• No need to pay a tutor — I'm here 24/7.\n"
+            "• Learn at your own pace with real materials.\n"
+            "• Level up from A1 to C1 with clear progress.\n\n"
+            "💎 You get *20 free voice messages* every day.\n"
+            "Unlock unlimited learning with /upgrade.\n\n"
+            "👇 *Choose what to do using the buttons below.*"
         )
         
-        text_ru = (
-            f"✅ *Регистрация завершена, {user_data['name']}!*\n\n"
-            f"🌐 Язык: {user_data['language']}\n\n"
-            "🎯 *Что я умею:*\n"
-            "• 💬 Общаться на английском с переводом\n"
-            "• 🎤 Слушать голосовые сообщения и отвечать\n"
-            "• 🔊 Отвечать голосом (живой, человеческий голос!)\n"
-            "• 📚 Помогать с грамматикой и разговорной речью\n\n"
-            "💎 20 бесплатных голосовых сообщений в день.\n"
-            "Используй /upgrade, чтобы снять лимиты!\n\n"
-            "👇 *Выбери, чем хочешь заняться, с помощью кнопок ниже.*"
-        )
+        # --- КОПИЯ ДЛЯ КНОПКИ ПЕРЕВОДА ---
+        translation_ru = translate_to_language(welcome_en, user_data["language"])
+        if translation_ru:
+            user_translations[user_id] = {"translation": translation_ru}
         
-        await m.reply(text_en, parse_mode="Markdown", reply_markup=main_menu())
-        await m.reply(text_ru, parse_mode="Markdown")
+        await m.reply(welcome_en, parse_mode="Markdown", reply_markup=main_menu())
+        await m.reply("📖 *Нажми кнопку ниже, чтобы прочитать это сообщение на русском.*", parse_mode="Markdown", reply_markup=translate_keyboard(user_data["language"]))
         return
 
     user_name = user_data["name"]
