@@ -395,16 +395,17 @@ async def lesson_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    if not is_premium(user_id):
-        await m.reply(
-            "📚 *Уроки доступны только в Премиум-подписке!*\n\n"
-            "💰 799 ₽/мес\n"
-            "✅ Уроки по уровням (A1–C1)\n"
-            "✅ Тесты и обратная связь\n\n"
-            "Нажми /upgrade, чтобы купить.",
-            parse_mode="Markdown"
-        )
-        return
+    # Убираем проверку на Premium для теста (закомментировано)
+    # if not is_premium(user_id):
+    #     await m.reply(
+    #         "📚 *Уроки доступны только в Премиум-подписке!*\n\n"
+    #         "💰 799 ₽/мес\n"
+    #         "✅ Уроки по уровням (A1–C1)\n"
+    #         "✅ Тесты и обратная связь\n\n"
+    #         "Нажми /upgrade, чтобы купить.",
+    #         parse_mode="Markdown"
+    #     )
+    #     return
     await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=lesson_menu())
 
 @dp.message(Command("buy"))
@@ -460,11 +461,12 @@ async def handle_callback(callback: CallbackQuery):
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
 
-    # Удаляем предыдущее сообщение с кнопками, чтобы не захламлять чат
-    try:
-        await callback.message.delete()
-    except:
-        pass
+    # --- УДАЛЯЕМ ТОЛЬКО МЕНЮ, НЕ ТРОГАЕМ ПЕРЕВОД ---
+    if callback.data != "translate":
+        try:
+            await callback.message.delete()
+        except:
+            pass
 
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
@@ -475,7 +477,7 @@ async def handle_callback(callback: CallbackQuery):
         await callback.answer()
         return
 
-    elif callback.data == "buy_base" or callback.data == "buy_premium":
+    if callback.data == "buy_base" or callback.data == "buy_premium":
         price = "399 ₽" if callback.data == "buy_base" else "799 ₽"
         await callback.message.reply(
             f"💎 *Вы выбрали подписку за {price}*\n\n"
@@ -487,7 +489,7 @@ async def handle_callback(callback: CallbackQuery):
         await callback.answer()
         return
 
-    elif callback.data.startswith("level_"):
+    if callback.data.startswith("level_"):
         level = callback.data.split("_")[1]
         user_data["current_level"] = level
         save_users(users)
@@ -495,21 +497,64 @@ async def handle_callback(callback: CallbackQuery):
         await callback.answer()
         return
 
-    elif callback.data.startswith("section_"):
+    if callback.data.startswith("section_"):
         parts = callback.data.split("_")
         level = parts[1]
         section = parts[2]
+
         if section == "grammar":
             await callback.message.reply("📚 *Выбери тему по грамматике:*", parse_mode="Markdown", reply_markup=grammar_submenu(level))
             await callback.answer()
             return
-        else:
+
+        if section in ["alphabet", "numbers"]:
             content = section_content(level, section)
             await callback.message.reply(content, parse_mode="Markdown")
             await callback.answer()
             return
 
-    elif callback.data.startswith("grammar_"):
+        if section in ["vocabulary", "reading", "listening", "speaking"]:
+            await callback.message.reply(f"⏳ *Генерирую раздел «{section}» для уровня {level}...*", parse_mode="Markdown")
+            lesson_data = generate_lesson_data(level, section, user_name)
+            if lesson_data:
+                if section == "vocabulary":
+                    words = lesson_data.get("words", [])
+                    text = "🗣️ *Вокабуляр*\n\n"
+                    for w in words[:6]:
+                        text += f"• {w['word']} — {w['definition']}\n  💬 {w['example']}\n\n"
+                    await callback.message.reply(text, parse_mode="Markdown")
+                elif section == "reading":
+                    text = f"📖 *Чтение*\n\n{lesson_data.get('text', 'Текст не сгенерирован.')}"
+                    await callback.message.reply(text, parse_mode="Markdown")
+                elif section == "listening":
+                    phrases = lesson_data.get("phrases", [])
+                    text = "🎧 *Аудирование*\n\nПрослушай фразы и напиши, что услышал:\n"
+                    for i, p in enumerate(phrases[:3], 1):
+                        text += f"{i}. ...\n"
+                    await callback.message.reply(text, parse_mode="Markdown")
+                    for p in phrases[:3]:
+                        audio_bytes = elevenlabs_tts(p)
+                        if audio_bytes:
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                                    tmp.write(audio_bytes)
+                                    path = tmp.name
+                                await callback.message.reply_voice(FSInputFile(path))
+                                os.unlink(path)
+                            except Exception as e:
+                                logging.error(f"TTS error: {e}")
+                elif section == "speaking":
+                    await callback.message.reply(
+                        f"🗣️ *Общение*\n\nТема: *{lesson_data.get('topic', 'твои любимые занятия')}*\n\n"
+                        "Расскажи мне о теме в нескольких предложениях. Ответь голосовым сообщением.",
+                        parse_mode="Markdown"
+                    )
+            else:
+                await callback.message.reply("❌ Не удалось сгенерировать контент. Попробуйте позже.")
+            await callback.answer()
+            return
+
+    if callback.data.startswith("grammar_"):
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
@@ -518,15 +563,14 @@ async def handle_callback(callback: CallbackQuery):
         await callback.answer()
         return
 
-    elif callback.data.startswith("level_back_"):
+    if callback.data.startswith("level_back_"):
         level = callback.data.split("_")[2]
         await callback.message.reply(level_intro(level), parse_mode="Markdown", reply_markup=level_menu(level))
         await callback.answer()
         return
 
-    else:
-        await callback.message.reply("⚠️ Неизвестная команда.")
-        await callback.answer()
+    await callback.message.reply("⚠️ Неизвестная команда.")
+    await callback.answer()
 
 @dp.message()
 async def catch_all(m: Message):
