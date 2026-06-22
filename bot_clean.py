@@ -625,6 +625,7 @@ async def handle_callback(callback: CallbackQuery):
         topic = parts[3]
         user_data["grammar_exercises"] = []
         user_data["grammar_current"] = 0
+        user_data["grammar_phase"] = "write"
         user_data["grammar_attempt"] = 0
         exercises_data = generate_grammar_exercises(level, topic, user_name)
         if exercises_data and "sentences" in exercises_data:
@@ -641,6 +642,7 @@ async def handle_callback(callback: CallbackQuery):
         user_data = users.get(user_id, {})
         idx = user_data.get("grammar_current", 0) + 1
         user_data["grammar_current"] = idx
+        user_data["grammar_phase"] = "write"
         user_data["grammar_attempt"] = 0
         save_users(users)
         await send_next_grammar_exercise(callback.message, user_id)
@@ -676,6 +678,8 @@ async def send_next_grammar_exercise(message: types.Message, user_id: str):
         return
 
     exercise = exercises[idx]
+    user_data["grammar_phase"] = "write"
+    save_users(users)
     text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_"
     await message.reply(text, parse_mode="Markdown")
 
@@ -685,6 +689,7 @@ async def check_grammar_answer(m: Message):
     user_data = users.get(user_id, {})
     exercises = user_data.get("grammar_exercises", [])
     idx = user_data.get("grammar_current", 0)
+    phase = user_data.get("grammar_phase", "write")
     attempt = user_data.get("grammar_attempt", 0)
 
     if idx >= len(exercises):
@@ -693,34 +698,15 @@ async def check_grammar_answer(m: Message):
     correct_answer = exercises[idx]["answer"].strip().lower()
     user_answer = m.text.strip().lower()
 
-    # Если правильно
-    if user_answer == correct_answer:
-        await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉\n\nТеперь произнеси всю фразу вслух.")
-        full_sentence = exercises[idx]["text"].replace("____", correct_answer)
-        audio_bytes = elevenlabs_tts(full_sentence)
-        if audio_bytes:
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                    tmp.write(audio_bytes)
-                    path = tmp.name
-                await m.reply_voice(FSInputFile(path))
-                os.unlink(path)
-            except Exception as e:
-                logging.error(f"TTS error: {e}")
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
-        ])
-        await m.reply("👇 *Нажми «Дальше», когда произнесёшь.*", parse_mode="Markdown", reply_markup=keyboard)
-        return True
-
-    # Если неправильно
-    else:
-        attempt += 1
-        user_data["grammar_attempt"] = attempt
-        save_users(users)
-
-        if attempt >= 2:
-            await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
+    # --- ЭТАП 1: ПРОВЕРКА ПИСЬМЕННОГО ОТВЕТА ---
+    if phase == "write":
+        if user_answer == correct_answer:
+            # Правильно → переходим к этапу произношения
+            user_data["grammar_phase"] = "speak"
+            user_data["grammar_attempt"] = 0
+            save_users(users)
+            await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
+            # Произносим всю фразу
             full_sentence = exercises[idx]["text"].replace("____", correct_answer)
             audio_bytes = elevenlabs_tts(full_sentence)
             if audio_bytes:
@@ -732,14 +718,98 @@ async def check_grammar_answer(m: Message):
                     os.unlink(path)
                 except Exception as e:
                     logging.error(f"TTS error: {e}")
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
-            ])
-            await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
+            await m.reply(
+                "🗣️ *Теперь произнеси эту фразу вслух голосом!*\n\n"
+                "Отправь голосовое сообщение с фразой.",
+                parse_mode="Markdown"
+            )
             return True
         else:
-            await m.reply(f"❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
-            return False
+            attempt += 1
+            user_data["grammar_attempt"] = attempt
+            save_users(users)
+            if attempt >= 2:
+                await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
+                user_data["grammar_phase"] = "speak"
+                user_data["grammar_attempt"] = 0
+                save_users(users)
+                full_sentence = exercises[idx]["text"].replace("____", correct_answer)
+                audio_bytes = elevenlabs_tts(full_sentence)
+                if audio_bytes:
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                            tmp.write(audio_bytes)
+                            path = tmp.name
+                        await m.reply_voice(FSInputFile(path))
+                        os.unlink(path)
+                    except Exception as e:
+                        logging.error(f"TTS error: {e}")
+                await m.reply(
+                    "🗣️ *Теперь произнеси эту фразу вслух голосом!*\n\n"
+                    "Отправь голосовое сообщение с фразой.",
+                    parse_mode="Markdown"
+                )
+                return True
+            else:
+                await m.reply("❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
+                return False
+
+    # --- ЭТАП 2: ПРОВЕРКА ГОЛОСОВОГО ---
+    elif phase == "speak":
+        return True  # голосовое обрабатывается в catch_all
+
+    return False
+
+async def check_grammar_voice(m: Message):
+    user_id = str(m.from_user.id)
+    users = load_users()
+    user_data = users.get(user_id, {})
+    exercises = user_data.get("grammar_exercises", [])
+    idx = user_data.get("grammar_current", 0)
+    phase = user_data.get("grammar_phase", "write")
+
+    if idx >= len(exercises) or phase != "speak":
+        return False
+
+    correct_answer = exercises[idx]["answer"].strip().lower()
+    full_sentence = exercises[idx]["text"].replace("____", correct_answer)
+
+    try:
+        file = await bot.get_file(m.voice.file_id)
+        voice_data = await bot.download_file(file.file_path)
+        audio = AudioSegment.from_file(io.BytesIO(voice_data.read()), format="ogg")
+        wav_bytes = io.BytesIO()
+        audio.export(wav_bytes, format="wav")
+        wav_bytes.seek(0)
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_bytes) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language="en-US")
+    except Exception as e:
+        logging.error(f"Voice recognition error: {e}")
+        await m.reply("❌ Не удалось распознать речь. Попробуй ещё раз, говори чётче.")
+        return False
+
+    # Сравниваем с правильной фразой (убираем лишние пробелы, приводим к нижнему регистру)
+    user_phrase = text.lower().strip()
+    correct_phrase = full_sentence.lower().strip()
+
+    if user_phrase == correct_phrase:
+        await m.reply("✅ *Отлично! Ты правильно произнёс фразу!* 🎉")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
+        ])
+        await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
+        return True
+    else:
+        # Ищем, что не так
+        await m.reply(
+            f"❌ *Ты произнёс:*\n`{text}`\n\n"
+            f"✅ *Правильно:*\n`{full_sentence}`\n\n"
+            "Попробуй ещё раз. Отправь голосовое снова.",
+            parse_mode="Markdown"
+        )
+        return False
 
 @dp.message()
 async def catch_all(m: Message):
@@ -752,6 +822,17 @@ async def catch_all(m: Message):
     step = user_data.get("step", "ready")
     user_name = users.get(user_id, {}).get("name", "Unknown")
     logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
+
+    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: голос ---
+    if m.voice and user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "speak":
+        await check_grammar_voice(m)
+        return
+
+    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: текст ---
+    if user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "write":
+        if m.text and not m.text.startswith("/"):
+            await check_grammar_answer(m)
+            return
 
     if m.text == "🗣️ Общаться":
         await m.reply("🗣️ *Я готов!* Отправь мне текст или голосовое сообщение.", parse_mode="Markdown", reply_markup=main_menu())
@@ -819,12 +900,6 @@ async def catch_all(m: Message):
     level = user_data.get("level", "A1")
     last_section = user_data.get("last_section", "")
 
-    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ ---
-    if user_data.get("grammar_exercises") and user_data.get("grammar_current") is not None:
-        if m.text and not m.text.startswith("/"):
-            await check_grammar_answer(m)
-            return
-
     # --- АЛФАВИТ ---
     if last_section == "alphabet" and m.text and not m.text.startswith("/"):
         letter = m.text.strip().upper()
@@ -875,6 +950,7 @@ async def catch_all(m: Message):
             await m.reply("❌ Напиши **цифру** (например, 5).")
             return
 
+    # --- ОБЫЧНОЕ ОБЩЕНИЕ (если не в задании) ---
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
         answer_en = ask_gpt(m.text, user_name, level)
