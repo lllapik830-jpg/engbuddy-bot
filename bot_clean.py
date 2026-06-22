@@ -16,6 +16,7 @@ import threading
 import time
 from datetime import date
 import difflib
+import random
 
 app = Flask(__name__)
 
@@ -60,14 +61,16 @@ def is_premium(user_id):
     premium_until = user_data.get("premium_until", 0)
     return time.time() < premium_until
 
-def clear_grammar_state(user_id):
+def clear_state(user_id):
     users = load_users()
     if user_id in users:
-        users[user_id]["grammar_exercises"] = []
-        users[user_id]["grammar_current"] = 0
-        users[user_id]["grammar_phase"] = "write"
-        users[user_id]["grammar_attempt"] = 0
-        users[user_id]["grammar_topic"] = ""
+        users[user_id]["exercise_text"] = ""
+        users[user_id]["exercise_answer"] = ""
+        users[user_id]["exercise_topic"] = ""
+        users[user_id]["exercise_attempt"] = 0
+        users[user_id]["vocab_words"] = []
+        users[user_id]["vocab_index"] = 0
+        users[user_id]["vocab_phase"] = "word"
         save_users(users)
 
 def get_system_prompt(user_name="Student", level="A1"):
@@ -144,21 +147,6 @@ def elevenlabs_tts(text):
     except Exception as e:
         logging.error(f"ElevenLabs error: {e}")
         return None
-
-def format_bilingual_response(text_en, lang):
-    if not lang or lang.lower() == "english":
-        return f"🇬🇧 {text_en}"
-    sentences = re.split(r'(?<=[.!?])\s+', text_en.strip())
-    parts = []
-    for sent in sentences:
-        if not sent:
-            continue
-        trans = translate_to_language(sent, lang)
-        if trans:
-            parts.append(f"🇬🇧 {sent}\n🌐 {trans}")
-        else:
-            parts.append(f"🇬🇧 {sent}")
-    return "\n\n".join(parts)
 
 def main_menu():
     return ReplyKeyboardMarkup(
@@ -262,22 +250,13 @@ def generate_lesson_data(level, topic, user_name):
         logging.error(f"Lesson generation error: {e}")
         return None
 
-def generate_grammar_exercises(level, topic, user_name):
+def generate_vocab_words(level, user_name):
     prompt = f"""
-    Generate 4 English sentences for level {level} on the topic "{topic}" with gaps (____) where the student must fill in the correct word.
-    Topic "{topic}" grammar rules:
-    - For "tobe": use am, is, are
-    - For "presentsimple": use the correct verb form (add -s/-es for he/she/it, or keep base form for I/you/we/they)
+    Generate 4 English words for level {level} with definitions and examples.
     Student's name is {user_name}.
-    Return ONLY a JSON object with the following structure:
-    {{
-        "sentences": [
-            {{"text": "I ____ a student.", "answer": "am"}},
-            {{"text": "She ____ to school every day.", "answer": "goes"}}
-        ]
-    }}
-    Important: each sentence must be DIFFERENT and UNIQUE.
-    Do not include any other text, only the JSON.
+    Return ONLY a JSON array:
+    [{{"word": "word1", "definition": "definition1", "example": "example1"}}, ...]
+    Do not include any other text, only the JSON array.
     """
     try:
         response = requests.post(
@@ -291,12 +270,40 @@ def generate_grammar_exercises(level, topic, user_name):
             timeout=30
         )
         content = response.json()["choices"][0]["message"]["content"]
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
         return None
     except Exception as e:
-        logging.error(f"Exercises generation error: {e}")
+        logging.error(f"Vocab generation error: {e}")
+        return None
+
+def generate_match_exercise(words):
+    prompt = f"""
+    Generate 4 sentences with gaps for the following words: {[w['word'] for w in words]}.
+    Each sentence must have a gap (____) where one of the words fits.
+    Return ONLY a JSON array of 4 sentences in the same order as the words:
+    ["Sentence 1 with ____", "Sentence 2 with ____", "Sentence 3 with ____", "Sentence 4 with ____"]
+    Do not include any other text, only the JSON array.
+    """
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 600
+            },
+            timeout=30
+        )
+        content = response.json()["choices"][0]["message"]["content"]
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
+    except Exception as e:
+        logging.error(f"Match exercise error: {e}")
         return None
 
 def section_content(level, section):
@@ -395,7 +402,7 @@ async def start_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         user_data = users[user_id]
         if user_data.get("name") is None:
             user_data["step"] = "name"
@@ -422,7 +429,7 @@ async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         premium_until = users[user_id].get("premium_until", 0)
         del users[user_id]
         users[user_id] = {
@@ -448,7 +455,7 @@ async def upgrade_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    clear_grammar_state(user_id)
+    clear_state(user_id)
     await m.reply(
         "💎 *Выберите подписку:*\n\n"
         "🔹 Безлимит (399 ₽) — голосовые без ограничений + исправление ошибок\n"
@@ -465,7 +472,7 @@ async def lesson_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    clear_grammar_state(user_id)
+    clear_state(user_id)
     await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=lesson_menu())
 
 @dp.message(Command("buy"))
@@ -475,7 +482,7 @@ async def buy_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    clear_grammar_state(user_id)
+    clear_state(user_id)
     await m.reply(
         f"💎 *Как купить подписку:*\n\n"
         f"1️⃣ Переведите нужную сумму на карту:\n"
@@ -500,7 +507,7 @@ async def activate_cmd(m: Message):
     if target_user_id not in users:
         await m.reply(f"❌ Пользователь с ID {target_user_id} не найден.")
         return
-    clear_grammar_state(target_user_id)
+    clear_state(target_user_id)
     users[target_user_id]["premium_until"] = time.time() + 30 * 24 * 60 * 60
     save_users(users)
     await m.reply(f"✅ Подписка активирована для пользователя {target_user_id}!")
@@ -522,6 +529,7 @@ async def handle_callback(callback: CallbackQuery):
     user_data = users.get(user_id, {})
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
+    level = user_data.get("current_level", "A1")
 
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
@@ -533,7 +541,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data == "buy_base" or callback.data == "buy_premium":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         price = "399 ₽" if callback.data == "buy_base" else "799 ₽"
         await callback.message.reply(
             f"💎 *Вы выбрали подписку за {price}*\n\n"
@@ -546,7 +554,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("level_"):
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         level = callback.data.split("_")[1]
         user_data["current_level"] = level
         save_users(users)
@@ -555,7 +563,7 @@ async def handle_callback(callback: CallbackQuery):
         return
 
     if callback.data.startswith("section_"):
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         parts = callback.data.split("_")
         level = parts[1]
         section = parts[2]
@@ -573,26 +581,40 @@ async def handle_callback(callback: CallbackQuery):
         elif section in ["tobe", "presentsimple"]:
             content = section_content(level, section)
             await callback.message.reply(content, parse_mode="Markdown")
-            user_data["last_section"] = "grammar"
-            user_data["grammar_topic"] = section
-            save_users(users)
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📝 Задание", callback_data=f"exercise_start_{level}_{section}")]
-            ])
-            await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
+            exercise = generate_one_exercise(level, section, user_name)
+            if exercise and "text" in exercise and "answer" in exercise:
+                user_data["exercise_text"] = exercise["text"]
+                user_data["exercise_answer"] = exercise["answer"]
+                user_data["exercise_topic"] = section
+                user_data["exercise_attempt"] = 0
+                save_users(users)
+                await callback.message.reply(
+                    f"📝 *Задание*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_",
+                    parse_mode="Markdown"
+                )
+            else:
+                await callback.message.reply("❌ Не удалось сгенерировать задание. Попробуйте позже.")
             await callback.answer()
             return
-        elif section in ["vocabulary", "reading", "listening", "speaking"]:
+        elif section == "vocabulary":
+            user_data["vocab_words"] = []
+            user_data["vocab_index"] = 0
+            user_data["vocab_phase"] = "word"
+            user_data["vocab_sentences"] = []
+            words = generate_vocab_words(level, user_name)
+            if words:
+                user_data["vocab_words"] = words
+                save_users(users)
+                await send_next_vocab_word(callback.message, user_id)
+            else:
+                await callback.message.reply("❌ Не удалось сгенерировать слова. Попробуйте позже.")
+            await callback.answer()
+            return
+        elif section in ["reading", "listening", "speaking"]:
             await callback.message.reply(f"⏳ *Генерирую раздел «{section}» для уровня {level}...*", parse_mode="Markdown")
             lesson_data = generate_lesson_data(level, section, user_name)
             if lesson_data:
-                if section == "vocabulary":
-                    words = lesson_data.get("words", [])
-                    text = "🗣️ *Вокабуляр*\n\n"
-                    for w in words[:6]:
-                        text += f"• {w['word']} — {w['definition']}\n  💬 {w['example']}\n\n"
-                    await callback.message.reply(text, parse_mode="Markdown")
-                elif section == "reading":
+                if section == "reading":
                     text = f"📖 *Чтение*\n\n{lesson_data.get('text', 'Текст не сгенерирован.')}"
                     await callback.message.reply(text, parse_mode="Markdown")
                 elif section == "listening":
@@ -624,55 +646,76 @@ async def handle_callback(callback: CallbackQuery):
             return
 
     if callback.data.startswith("grammar_"):
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
         content = section_content(level, topic)
         await callback.message.reply(content, parse_mode="Markdown")
-        user_data["last_section"] = "grammar"
-        user_data["grammar_topic"] = topic
-        save_users(users)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Задание", callback_data=f"exercise_start_{level}_{topic}")]
-        ])
-        await callback.message.reply("👇 *Нажми на кнопку, чтобы начать задание!*", parse_mode="Markdown", reply_markup=keyboard)
-        await callback.answer()
-        return
-
-    if callback.data.startswith("exercise_start_"):
-        clear_grammar_state(user_id)
-        parts = callback.data.split("_")
-        level = parts[2]
-        topic = parts[3]
-        user_data["grammar_exercises"] = []
-        user_data["grammar_current"] = 0
-        user_data["grammar_phase"] = "write"
-        user_data["grammar_attempt"] = 0
-        exercises_data = generate_grammar_exercises(level, topic, user_name)
-        if exercises_data and "sentences" in exercises_data:
-            user_data["grammar_exercises"] = exercises_data["sentences"]
-            user_data["grammar_topic"] = topic
+        exercise = generate_one_exercise(level, topic, user_name)
+        if exercise and "text" in exercise and "answer" in exercise:
+            user_data["exercise_text"] = exercise["text"]
+            user_data["exercise_answer"] = exercise["answer"]
+            user_data["exercise_topic"] = topic
+            user_data["exercise_attempt"] = 0
             save_users(users)
-            await send_next_grammar_exercise(callback.message, user_id)
+            await callback.message.reply(
+                f"📝 *Задание*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_",
+                parse_mode="Markdown"
+            )
         else:
-            await callback.message.reply("❌ Не удалось сгенерировать задания. Попробуйте позже.")
+            await callback.message.reply("❌ Не удалось сгенерировать задание. Попробуйте позже.")
         await callback.answer()
         return
 
-    if callback.data.startswith("grammar_next_"):
+    if callback.data.startswith("vocab_next_"):
         user_data = users.get(user_id, {})
-        idx = user_data.get("grammar_current", 0) + 1
-        user_data["grammar_current"] = idx
-        user_data["grammar_phase"] = "write"
-        user_data["grammar_attempt"] = 0
+        idx = user_data.get("vocab_index", 0) + 1
+        user_data["vocab_index"] = idx
         save_users(users)
-        await send_next_grammar_exercise(callback.message, user_id)
+        await send_next_vocab_word(callback.message, user_id)
+        await callback.answer()
+        return
+
+    if callback.data.startswith("vocab_help_"):
+        user_data = users.get(user_id, {})
+        words = user_data.get("vocab_words", [])
+        idx = user_data.get("vocab_index", 0)
+        if idx < len(words):
+            word = words[idx]
+            example = word.get("example", "")
+            await callback.message.reply(f"💡 *Пример предложения:*\n{example}")
+            await callback.message.reply("📝 *Теперь попробуй сам составить предложение с этим словом.*")
+        await callback.answer()
+        return
+
+    if callback.data.startswith("vocab_done_"):
+        user_data = users.get(user_id, {})
+        words = user_data.get("vocab_words", [])
+        if len(words) < 4:
+            await callback.message.reply("❌ Недостаточно слов для задания. Попробуйте позже.")
+            await callback.answer()
+            return
+        sentences = generate_match_exercise(words)
+        if sentences and len(sentences) == 4:
+            user_data["vocab_sentences"] = sentences
+            user_data["vocab_phase"] = "match"
+            save_users(users)
+            text = "🧩 *Задание на соответствие*\n\n"
+            for i, w in enumerate(words, 1):
+                text += f"{i}. {w['word']}\n"
+            text += "\n"
+            for i, s in enumerate(sentences, 1):
+                text += f"{chr(64+i)}. {s}\n"
+            text += "\n📝 *Введи 4 цифры в порядке соответствия (например, 1432)*"
+            await callback.message.reply(text, parse_mode="Markdown")
+        else:
+            await callback.message.reply("❌ Не удалось сгенерировать задание. Попробуйте позже.")
         await callback.answer()
         return
 
     if callback.data.startswith("level_back_"):
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         level = callback.data.split("_")[2]
         await callback.message.reply(level_intro(level), parse_mode="Markdown", reply_markup=level_menu(level))
         await callback.answer()
@@ -681,172 +724,113 @@ async def handle_callback(callback: CallbackQuery):
     await callback.message.reply("⚠️ Неизвестная команда.")
     await callback.answer()
 
-async def send_next_grammar_exercise(message: types.Message, user_id: str):
+def generate_one_exercise(level, topic, user_name):
+    prompt = f"""
+    Generate ONE English sentence for level {level} on the topic "{topic}" with a gap (____) where the student must fill in the correct word.
+    Topic "{topic}" grammar rules:
+    - For "tobe": use am, is, are
+    - For "presentsimple": use the correct verb form (add -s/-es for he/she/it, or keep base form for I/you/we/they)
+    Student's name is {user_name}.
+    Return ONLY a JSON object:
+    {{"text": "I ____ a student.", "answer": "am"}}
+    Do not include any other text, only the JSON.
+    """
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 300
+            },
+            timeout=15
+        )
+        content = response.json()["choices"][0]["message"]["content"]
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
+    except Exception as e:
+        logging.error(f"Exercise generation error: {e}")
+        return None
+
+async def send_next_vocab_word(message: types.Message, user_id: str):
     users = load_users()
     user_data = users.get(user_id, {})
-    exercises = user_data.get("grammar_exercises", [])
-    idx = user_data.get("grammar_current", 0)
+    words = user_data.get("vocab_words", [])
+    idx = user_data.get("vocab_index", 0)
 
-    if idx >= len(exercises):
-        topic_name = "глагол to be" if user_data.get("grammar_topic") == "tobe" else "Present Simple"
-        level = user_data.get("current_level", "A1")
-
-        await message.reply(
-            f"🎉 *Отлично! Ты справился со всеми заданиями по {topic_name}!*\n\n"
-            f"Ты отлично усвоил эту тему. Теперь ты готов двигаться дальше! 💪",
-            parse_mode="Markdown"
-        )
+    if idx >= len(words):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{level}")]
+            [InlineKeyboardButton(text="🧩 Задание на соответствие", callback_data="vocab_done_")]
         ])
-        await message.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
+        await message.reply(
+            "📚 *Все слова изучены!*\n\n"
+            "Теперь проверь себя — выполни задание на соответствие.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
         return
 
-    exercise = exercises[idx]
-    user_data["grammar_phase"] = "write"
-    user_data["grammar_attempt"] = 0
-    save_users(users)
-    text = f"📝 *Задание {idx+1}/{len(exercises)}*\n\n{exercise['text']}\n\n_Напиши правильный ответ:_"
-    await message.reply(text, parse_mode="Markdown")
+    word = words[idx]
+    text = (
+        f"📚 *Слово {idx+1}/{len(words)}*\n\n"
+        f"🇬🇧 {word['word']}\n"
+        f"📖 {word['definition']}\n"
+        f"💬 *Пример:* {word['example']}\n\n"
+        f"_Составь своё предложение с этим словом._"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💡 Помоги составить предложение", callback_data=f"vocab_help_{idx}")],
+        [InlineKeyboardButton(text="➡️ Следующее слово", callback_data="vocab_next_")]
+    ])
+    await message.reply(text, parse_mode="Markdown", reply_markup=keyboard)
 
-async def check_grammar_answer(m: Message):
+async def check_match_answer(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     user_data = users.get(user_id, {})
-    exercises = user_data.get("grammar_exercises", [])
-    idx = user_data.get("grammar_current", 0)
-    phase = user_data.get("grammar_phase", "write")
-    attempt = user_data.get("grammar_attempt", 0)
-
-    if idx >= len(exercises):
+    words = user_data.get("vocab_words", [])
+    sentences = user_data.get("vocab_sentences", [])
+    if not words or not sentences or len(words) != 4 or len(sentences) != 4:
         return False
 
-    correct_answer = exercises[idx]["answer"].strip().lower()
-    user_answer = m.text.strip().lower()
-
-    if phase == "write":
-        if user_answer == correct_answer:
-            user_data["grammar_phase"] = "speak"
-            user_data["grammar_attempt"] = 0
-            save_users(users)
-            await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
-            full_sentence = exercises[idx]["text"].replace("____", correct_answer)
-            audio_bytes = elevenlabs_tts(full_sentence)
-            if audio_bytes:
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                        tmp.write(audio_bytes)
-                        path = tmp.name
-                    await m.reply_voice(FSInputFile(path))
-                    os.unlink(path)
-                except Exception as e:
-                    logging.error(f"TTS error: {e}")
-            await m.reply(
-                "🗣️ *Теперь произнеси эту фразу вслух голосом!*\n\n"
-                "Отправь голосовое сообщение с фразой.",
-                parse_mode="Markdown"
-            )
-            return True
-        else:
-            attempt += 1
-            user_data["grammar_attempt"] = attempt
-            save_users(users)
-            if attempt >= 2:
-                await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
-                user_data["grammar_phase"] = "speak"
-                user_data["grammar_attempt"] = 0
-                save_users(users)
-                full_sentence = exercises[idx]["text"].replace("____", correct_answer)
-                audio_bytes = elevenlabs_tts(full_sentence)
-                if audio_bytes:
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                            tmp.write(audio_bytes)
-                            path = tmp.name
-                        await m.reply_voice(FSInputFile(path))
-                        os.unlink(path)
-                    except Exception as e:
-                        logging.error(f"TTS error: {e}")
-                await m.reply(
-                    "🗣️ *Теперь произнеси эту фразу вслух голосом!*\n\n"
-                    "Отправь голосовое сообщение с фразой.",
-                    parse_mode="Markdown"
-                )
-                return True
-            else:
-                await m.reply("❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
-                return False
-
-    elif phase == "speak":
+    answer = m.text.strip()
+    if not answer.isdigit() or len(answer) != 4:
+        await m.reply("❌ *Неверный формат.* Введи 4 цифры (например, 1432).", parse_mode="Markdown")
         return True
 
-    return False
+    # Проверяем, что все цифры от 1 до 4
+    digits = [int(d) for d in answer]
+    if set(digits) != {1, 2, 3, 4}:
+        await m.reply("❌ *Неверный формат.* Используй цифры от 1 до 4 без повторений.", parse_mode="Markdown")
+        return True
 
-async def check_grammar_voice(m: Message):
-    user_id = str(m.from_user.id)
-    users = load_users()
-    user_data = users.get(user_id, {})
-    exercises = user_data.get("grammar_exercises", [])
-    idx = user_data.get("grammar_current", 0)
-    phase = user_data.get("grammar_phase", "write")
-
-    if idx >= len(exercises) or phase != "speak":
-        return False
-
-    correct_answer = exercises[idx]["answer"].strip().lower()
-    full_sentence = exercises[idx]["text"].replace("____", correct_answer)
-
-    try:
-        file = await bot.get_file(m.voice.file_id)
-        voice_data = await bot.download_file(file.file_path)
-        audio = AudioSegment.from_file(io.BytesIO(voice_data.read()), format="ogg")
-        wav_bytes = io.BytesIO()
-        audio.export(wav_bytes, format="wav")
-        wav_bytes.seek(0)
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(wav_bytes) as source:
-            audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language="en-US")
-    except Exception as e:
-        logging.error(f"Voice recognition error: {e}")
-        await m.reply("❌ Не удалось распознать речь. Попробуй ещё раз, говори чётче.")
-        return False
-
-    user_phrase = text.lower().strip()
-    correct_phrase = full_sentence.lower().strip()
-
-    similarity = difflib.SequenceMatcher(None, user_phrase, correct_phrase).ratio()
-
-    if similarity >= 0.8:
-        await m.reply("✅ *Отлично! Ты правильно произнёс фразу!* 🎉")
+    # Проверяем соответствие
+    correct = all(words[i]['word'].lower() in sentences[digits[i]-1].lower() for i in range(4))
+    if correct:
+        await m.reply("✅ *Отлично! Все слова подобраны верно!* 🎉")
+        # Переход к финальному заданию
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Дальше", callback_data=f"grammar_next_{idx}")]
+            [InlineKeyboardButton(text="🗣️ Завершить вокабуляр", callback_data="vocab_final")]
         ])
-        await m.reply("👇 *Нажми «Дальше», чтобы продолжить.*", parse_mode="Markdown", reply_markup=keyboard)
-        return True
+        await m.reply(
+            "📣 *Финальное задание:* произнеси любое предложение с одним из изученных слов.",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
     else:
-        attempt = user_data.get("grammar_attempt", 0) + 1
-        user_data["grammar_attempt"] = attempt
-        save_users(users)
-
-        if attempt >= 2:
-            await m.reply(
-                f"❌ *Ты произнёс:*\n`{text}`\n\n"
-                f"✅ *Правильно:*\n`{full_sentence}`\n\n"
-                "Попробуй ещё раз. Отправь голосовое снова.",
-                parse_mode="Markdown"
-            )
-            user_data["grammar_attempt"] = 0
-            save_users(users)
-            return False
+        # Находим ошибки
+        errors = []
+        for i in range(4):
+            if words[i]['word'].lower() not in sentences[digits[i]-1].lower():
+                errors.append(f"{words[i]['word']} → предложение {chr(64+digits[i])}")
+        if errors:
+            await m.reply(f"❌ *Не все слова подобраны верно.*\nОшибки в: {', '.join(errors)}")
         else:
-            await m.reply(
-                f"❌ *Ты произнёс:*\n`{text}`\n\n"
-                f"✅ *Правильно:*\n`{full_sentence}`\n\n"
-                "Попробуй ещё раз. Отправь голосовое снова.",
-                parse_mode="Markdown"
-            )
-            return False
+            await m.reply("❌ *Попробуй ещё раз.*")
+    return True
 
 @dp.message()
 async def catch_all(m: Message):
@@ -861,30 +845,30 @@ async def catch_all(m: Message):
     logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
 
     if m.text == "🗣️ Общаться":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         await m.reply("🗣️ *Я готов!* Отправь мне текст или голосовое сообщение.", parse_mode="Markdown", reply_markup=main_menu())
         return
     if m.text == "📖 Уроки":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         await lesson_cmd(m)
         return
     if m.text == "💎 Подписка":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         await upgrade_cmd(m)
         return
     if m.text == "📊 Прогресс":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         if is_premium(user_id):
             await m.reply("📊 *Твой прогресс:*\n\n✅ Премиум активен\n📚 Уроков пройдено: 0\n🎯 Следующий уровень: A1", parse_mode="Markdown", reply_markup=main_menu())
         else:
             await m.reply("📊 *Ты на бесплатном тарифе.*\n\n🎤 Осталось голосовых на сегодня: 20\n💎 Купи подписку, чтобы снять лимиты.", parse_mode="Markdown", reply_markup=main_menu())
         return
     if m.text == "🔄 Сброс":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         await reset_cmd(m)
         return
     if m.text == "❓ Помощь":
-        clear_grammar_state(user_id)
+        clear_state(user_id)
         await m.reply(
             "❓ *Как пользоваться ботом:*\n\n"
             "1️⃣ Зарегистрируйся через /start\n"
@@ -898,16 +882,81 @@ async def catch_all(m: Message):
         )
         return
 
-    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: голос ---
-    if m.voice and user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "speak":
-        await check_grammar_voice(m)
-        return
-
-    # --- ГРАММАТИЧЕСКИЕ ЗАДАНИЯ: текст ---
-    if user_data.get("grammar_exercises") and user_data.get("grammar_phase") == "write":
+    # --- Грамматическое задание (текст) ---
+    if user_data.get("exercise_text") and user_data.get("exercise_answer"):
         if m.text and not m.text.startswith("/"):
-            await check_grammar_answer(m)
-            return
+            user_answer = m.text.strip().lower()
+            correct_answer = user_data["exercise_answer"].strip().lower()
+            attempt = user_data.get("exercise_attempt", 0)
+            if user_answer == correct_answer:
+                await m.reply(f"✅ *Правильно!* {correct_answer.upper()} — верно! 🎉")
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{user_data.get('current_level', 'A1')}")]
+                ])
+                await m.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
+                user_data["exercise_text"] = ""
+                user_data["exercise_answer"] = ""
+                save_users(users)
+                return True
+            else:
+                attempt += 1
+                user_data["exercise_attempt"] = attempt
+                save_users(users)
+                if attempt >= 2:
+                    await m.reply(f"❌ *Неправильно.* Правильный ответ: **{correct_answer.upper()}**")
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{user_data.get('current_level', 'A1')}")]
+                    ])
+                    await m.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
+                    user_data["exercise_text"] = ""
+                    user_data["exercise_answer"] = ""
+                    save_users(users)
+                    return True
+                else:
+                    await m.reply("❌ *Неправильно.* Попробуй ещё раз.\n\n_Напиши правильный ответ:_", parse_mode="Markdown")
+                    return True
+            return True
+
+    # --- Вокабуляр: финальное задание (голос) ---
+    if user_data.get("vocab_words") and user_data.get("vocab_phase") == "final":
+        if m.voice:
+            try:
+                file = await bot.get_file(m.voice.file_id)
+                voice_data = await bot.download_file(file.file_path)
+                audio = AudioSegment.from_file(io.BytesIO(voice_data.read()), format="ogg")
+                wav_bytes = io.BytesIO()
+                audio.export(wav_bytes, format="wav")
+                wav_bytes.seek(0)
+                recognizer = sr.Recognizer()
+                with sr.AudioFile(wav_bytes) as source:
+                    audio_data = recognizer.record(source)
+                    text = recognizer.recognize_google(audio_data, language="en-US")
+                words = [w['word'] for w in user_data.get("vocab_words", [])]
+                found = [w for w in words if w.lower() in text.lower()]
+                if found:
+                    await m.reply(f"✅ *Отлично! Ты использовал слова: {', '.join(found)}* 🎉")
+                else:
+                    await m.reply("❌ *Ты не использовал изученные слова. Попробуй ещё раз.*")
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="➡️ Следующий раздел", callback_data=f"level_back_{user_data.get('current_level', 'A1')}")]
+                ])
+                await m.reply("👇 *Выбери следующий раздел:*", parse_mode="Markdown", reply_markup=keyboard)
+                user_data["vocab_words"] = []
+                save_users(users)
+                return True
+            except Exception as e:
+                logging.error(f"Voice error: {e}")
+                await m.reply("❌ Не удалось распознать речь. Попробуй ещё раз.")
+                return True
+        else:
+            await m.reply("🗣️ *Отправь голосовое сообщение с предложением.*")
+            return True
+
+    # --- Задание на соответствие ---
+    if user_data.get("vocab_sentences") and user_data.get("vocab_phase") == "match":
+        if m.text and not m.text.startswith("/"):
+            await check_match_answer(m)
+            return True
 
     if step == "name":
         user_data["name"] = m.text.strip()
