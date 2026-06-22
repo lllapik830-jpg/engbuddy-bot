@@ -196,17 +196,20 @@ def topic_menu(level):
         keyboard.inline_keyboard.append([InlineKeyboardButton(text=topic, callback_data=f"topic_{level}_{topic}")])
     return keyboard
 
-def generate_lesson(level, topic, user_name):
+def generate_lesson_data(level, topic, user_name):
     prompt = f"""
     Generate a 15-minute English lesson for level {level} on the topic "{topic}".
     Student's name is {user_name}.
-    Include:
-    - 10 new words with definitions and examples
-    - A short text to read
-    - 3 audio phrases for listening practice
-    - 3 questions for free speaking practice
-    Format: Clear sections with headings: VOCABULARY, READING, LISTENING, SPEAKING.
-    Return only the lesson text.
+    Return ONLY a JSON object with the following structure:
+    {{
+        "words": [
+            {{"word": "word1", "definition": "definition1", "example": "example1"}},
+            ...
+        ],
+        "text": "short reading text (3-5 sentences)",
+        "phrases": ["phrase1", "phrase2", "phrase3"]
+    }}
+    Do not include any other text, only the JSON.
     """
     try:
         response = requests.post(
@@ -219,7 +222,12 @@ def generate_lesson(level, topic, user_name):
             },
             timeout=30
         )
-        return response.json()["choices"][0]["message"]["content"]
+        content = response.json()["choices"][0]["message"]["content"]
+        # Извлекаем JSON из ответа (на случай, если будут лишние символы)
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
     except Exception as e:
         logging.error(f"Lesson generation error: {e}")
         return None
@@ -255,11 +263,8 @@ async def reset_cmd(m: Message):
     user_id = str(m.from_user.id)
     users = load_users()
     if user_id in users:
-        # Сохраняем подписку отдельно
         premium_until = users[user_id].get("premium_until", 0)
-        # Удаляем все данные пользователя
         del users[user_id]
-        # Создаём нового пользователя с сохранённой подпиской
         users[user_id] = {
             "name": None,
             "language": None,
@@ -363,15 +368,15 @@ async def handle_callback(callback: CallbackQuery):
     user_data = users.get(user_id, {})
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
-    
+
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
         if translation:
             await callback.message.reply(f"🌐 {translation}")
         else:
-            await callback.message.reply("❌ Translation not found.")
+            await callback.message.reply("❌ Перевод не найден.")
         await callback.answer()
-    
+
     elif callback.data == "buy_base" or callback.data == "buy_premium":
         price = "399 ₽" if callback.data == "buy_base" else "799 ₽"
         await callback.message.reply(
@@ -382,7 +387,7 @@ async def handle_callback(callback: CallbackQuery):
             parse_mode="Markdown"
         )
         await callback.answer()
-    
+
     elif callback.data.startswith("level_"):
         level = callback.data.split("_")[1]
         user_data["current_level"] = level
@@ -393,38 +398,201 @@ async def handle_callback(callback: CallbackQuery):
             reply_markup=topic_menu(level)
         )
         await callback.answer()
-    
+
     elif callback.data.startswith("topic_"):
         parts = callback.data.split("_")
         level = parts[1]
         topic = parts[2]
-        
+
         await callback.message.reply(f"⏳ *Генерирую урок на тему «{topic}» ({level})...*\n\nЭто займёт 10–15 секунд.", parse_mode="Markdown")
-        
-        lesson = generate_lesson(level, topic, user_name)
-        if lesson:
-            # --- БЛОК VOCABULARY ---
-            await callback.message.reply(
-                f"📚 *Вокабуляр — {topic} ({level})*\n\n{lesson[:800]}...", 
-                parse_mode="Markdown"
-            )
-            # Голосовое для озвучивания слов (фрагмент)
-            audio_bytes = elevenlabs_tts(lesson[:300])
-            if audio_bytes:
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                        tmp.write(audio_bytes)
-                        path = tmp.name
-                    await callback.message.reply_voice(FSInputFile(path))
-                    os.unlink(path)
-                except Exception as e:
-                    logging.error(f"TTS error: {e}")
-            # Кнопка перевода
-            user_translations[user_id] = {"translation": translate_to_language(lesson[:800], lang)}
-            await callback.message.reply("📖 Нажми, чтобы перевести текст выше.", reply_markup=translate_keyboard(lang))
-        else:
+
+        lesson_data = generate_lesson_data(level, topic, user_name)
+        if not lesson_data:
             await callback.message.reply("❌ Не удалось сгенерировать урок. Попробуйте позже.")
+            await callback.answer()
+            return
+
+        user_data["lesson_words"] = lesson_data.get("words", [])
+        user_data["lesson_text"] = lesson_data.get("text", "")
+        user_data["lesson_phrases"] = lesson_data.get("phrases", [])
+        user_data["lesson_topic"] = topic
+        user_data["lesson_level"] = level
+        user_data["lesson_step"] = "vocabulary"
+        user_data["lesson_word_index"] = 0
+        save_users(users)
+
+        await send_next_word(callback.message, user_id)
         await callback.answer()
+
+    elif callback.data == "vocab_next":
+        user_data = users.get(user_id, {})
+        idx = user_data.get("lesson_word_index", 0) + 1
+        user_data["lesson_word_index"] = idx
+        save_users(users)
+        await send_next_word(callback.message, user_id)
+        await callback.answer()
+
+    elif callback.data == "vocab_done":
+        user_data = users.get(user_id, {})
+        user_data["lesson_step"] = "exercise"
+        save_users(users)
+        await send_exercise(callback.message, user_id)
+        await callback.answer()
+
+    elif callback.data.startswith("ex_ans_"):
+        choice = int(callback.data.split("_")[2])
+        user_data = users.get(user_id, {})
+        correct = user_data.get("exercise_correct", 0)
+        if choice == correct:
+            await callback.message.reply("✅ Правильно! Молодец! 🎉")
+        else:
+            await callback.message.reply(f"❌ Неправильно. Правильный ответ был: {user_data.get('exercise_correct_word', '')}")
+        await callback.answer()
+
+    elif callback.data == "next_section":
+        user_data = users.get(user_id, {})
+        step = user_data.get("lesson_step", "vocabulary")
+        if step == "exercise":
+            user_data["lesson_step"] = "reading"
+            save_users(users)
+            await send_reading(callback.message, user_id)
+        elif step == "reading":
+            user_data["lesson_step"] = "listening"
+            save_users(users)
+            await send_listening(callback.message, user_id)
+        elif step == "listening":
+            user_data["lesson_step"] = "speaking"
+            save_users(users)
+            await send_speaking(callback.message, user_id)
+        elif step == "speaking":
+            await callback.message.reply("🎉 *Поздравляю! Ты прошёл урок!*\n\nОтличная работа! Ты прокачал английский 💪")
+        await callback.answer()
+
+async def send_next_word(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    words = user_data.get("lesson_words", [])
+    idx = user_data.get("lesson_word_index", 0)
+    lang = user_data.get("language", "Russian")
+
+    if idx >= len(words):
+        user_data["lesson_step"] = "exercise"
+        save_users(users)
+        await send_exercise(message, user_id)
+        return
+
+    word_data = words[idx]
+    word = word_data.get("word", "")
+    definition = word_data.get("definition", "")
+    example = word_data.get("example", "")
+
+    text = f"📚 *Слово {idx+1}/{len(words)}*\n\n🇬🇧 {word}\n📖 {definition}\n💬 *Пример:* {example}"
+    translation = translate_to_language(f"{word}: {definition}. Пример: {example}", lang)
+
+    await message.reply(text, parse_mode="Markdown")
+    if translation:
+        user_translations[user_id] = {"translation": translation}
+        await message.reply("🌐 Нажми, чтобы перевести это слово.", reply_markup=translate_keyboard(lang))
+
+    audio_text = f"{word}. {example}"
+    audio_bytes = elevenlabs_tts(audio_text)
+    if audio_bytes:
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                tmp.write(audio_bytes)
+                path = tmp.name
+            await message.reply_voice(FSInputFile(path))
+            os.unlink(path)
+        except Exception as e:
+            logging.error(f"TTS error: {e}")
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➡️ Дальше", callback_data="vocab_next")]
+    ])
+    await message.reply("Нажми «Дальше», чтобы продолжить.", reply_markup=keyboard)
+
+async def send_exercise(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    words = user_data.get("lesson_words", [])
+    if len(words) < 4:
+        await message.reply("❌ Недостаточно слов для упражнения.")
+        return
+
+    selected = words[:4]
+    correct_word = selected[0]["word"]
+    user_data["exercise_correct"] = 0
+    user_data["exercise_correct_word"] = correct_word
+    save_users(users)
+
+    text = "✍️ *Задание: подставь слово в предложение*\n\n"
+    text += f"Выбери правильное слово:\n"
+    for i, w in enumerate(selected):
+        text += f"{i+1}. {w['word']}\n"
+    text += f"\n➡️ *Какое слово подходит в предложение:* «{selected[0]['example']}»"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"1️⃣ {selected[0]['word']}", callback_data=f"ex_ans_0"),
+            InlineKeyboardButton(text=f"2️⃣ {selected[1]['word']}", callback_data=f"ex_ans_1")
+        ],
+        [
+            InlineKeyboardButton(text=f"3️⃣ {selected[2]['word']}", callback_data=f"ex_ans_2"),
+            InlineKeyboardButton(text=f"4️⃣ {selected[3]['word']}", callback_data=f"ex_ans_3")
+        ]
+    ])
+
+    await message.reply(text, parse_mode="Markdown", reply_markup=keyboard)
+
+async def send_reading(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    text = user_data.get("lesson_text", "Короткий текст для чтения. Прочитай его вслух в микрофон.")
+    await message.reply(f"📖 *Чтение*\n\n{text}\n\n🎤 Прочитай текст в микрофон. Я проверю твоё произношение.", parse_mode="Markdown")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Прочитал", callback_data="next_section")]
+    ])
+    await message.reply("Нажми «Прочитал», когда будешь готов к следующему блоку.", reply_markup=keyboard)
+
+async def send_listening(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    phrases = user_data.get("lesson_phrases", ["Hello, how are you?", "I like learning English."])
+    text = "🎧 *Аудирование*\n\nЯ произнесу несколько фраз. Напиши, что ты услышал.\n"
+    for i in range(len(phrases[:3])):
+        text += f"{i+1}. ...\n"
+    await message.reply(text, parse_mode="Markdown")
+    for phrase in phrases[:3]:
+        audio_bytes = elevenlabs_tts(phrase)
+        if audio_bytes:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                    tmp.write(audio_bytes)
+                    path = tmp.name
+                await message.reply_voice(FSInputFile(path))
+                os.unlink(path)
+            except Exception as e:
+                logging.error(f"TTS error: {e}")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Прослушал", callback_data="next_section")]
+    ])
+    await message.reply("Нажми «Прослушал», чтобы перейти к общению.", reply_markup=keyboard)
+
+async def send_speaking(message: types.Message, user_id: str):
+    users = load_users()
+    user_data = users.get(user_id, {})
+    topic = user_data.get("lesson_topic", "твои любимые занятия")
+    await message.reply(
+        f"🗣️ *Общение*\n\n"
+        f"Тема: *{topic}*\n\n"
+        f"Расскажи мне о {topic} в нескольких предложениях. Ответь голосовым сообщением.\n\n"
+        f"Я проверю твою грамматику и произношение.",
+        parse_mode="Markdown"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ответил", callback_data="next_section")]
+    ])
+    await message.reply("Нажми «Ответил», когда закончишь говорить.", reply_markup=keyboard)
 
 @dp.message()
 async def catch_all(m: Message):
@@ -437,7 +605,7 @@ async def catch_all(m: Message):
     step = user_data.get("step", "ready")
     user_name = users.get(user_id, {}).get("name", "Unknown")
     logging.info(f"📩 [{user_name}] (ID: {user_id}) | Type: {m.content_type} | Text: {m.text if m.text else 'Voice/Media'}")
-    
+
     if m.text == "🗣️ Общаться":
         await m.reply("🗣️ *Я готов!* Отправь мне текст или голосовое сообщение.", parse_mode="Markdown", reply_markup=main_menu())
         return
@@ -469,7 +637,7 @@ async def catch_all(m: Message):
             reply_markup=main_menu()
         )
         return
-    
+
     if step == "name":
         user_data["name"] = m.text.strip()
         user_data["step"] = "language"
@@ -498,11 +666,11 @@ async def catch_all(m: Message):
             reply_markup=main_menu()
         )
         return
-    
+
     user_name = user_data["name"]
     lang = user_data["language"]
     level = user_data.get("level", "A1")
-    
+
     if m.text and not m.text.startswith("/"):
         await m.reply("💬 Thinking...")
         answer_en = ask_gpt(m.text, user_name, level)
@@ -520,7 +688,7 @@ async def catch_all(m: Message):
             except Exception as e:
                 logging.error(f"TTS error: {e}")
         return
-    
+
     if m.voice:
         if not is_premium(user_id):
             today = date.today().isoformat()
