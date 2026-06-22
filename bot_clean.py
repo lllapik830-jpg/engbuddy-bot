@@ -395,17 +395,6 @@ async def lesson_cmd(m: Message):
     if user_id not in users:
         await m.reply("Please use /start first.")
         return
-    # Убираем проверку на Premium для теста (закомментировано)
-    # if not is_premium(user_id):
-    #     await m.reply(
-    #         "📚 *Уроки доступны только в Премиум-подписке!*\n\n"
-    #         "💰 799 ₽/мес\n"
-    #         "✅ Уроки по уровням (A1–C1)\n"
-    #         "✅ Тесты и обратная связь\n\n"
-    #         "Нажми /upgrade, чтобы купить.",
-    #         parse_mode="Markdown"
-    #     )
-    #     return
     await m.reply("📚 *Выбери свой уровень:*", parse_mode="Markdown", reply_markup=lesson_menu())
 
 @dp.message(Command("buy"))
@@ -461,13 +450,6 @@ async def handle_callback(callback: CallbackQuery):
     user_name = user_data.get("name", "Student")
     lang = user_data.get("language", "Russian")
 
-    # --- УДАЛЯЕМ ТОЛЬКО МЕНЮ, НЕ ТРОГАЕМ ПЕРЕВОД ---
-    if callback.data != "translate":
-        try:
-            await callback.message.delete()
-        except:
-            pass
-
     if callback.data == "translate":
         translation = user_translations.get(user_id, {}).get("translation")
         if translation:
@@ -501,19 +483,16 @@ async def handle_callback(callback: CallbackQuery):
         parts = callback.data.split("_")
         level = parts[1]
         section = parts[2]
-
         if section == "grammar":
             await callback.message.reply("📚 *Выбери тему по грамматике:*", parse_mode="Markdown", reply_markup=grammar_submenu(level))
             await callback.answer()
             return
-
-        if section in ["alphabet", "numbers"]:
+        elif section in ["alphabet", "numbers"]:
             content = section_content(level, section)
             await callback.message.reply(content, parse_mode="Markdown")
             await callback.answer()
             return
-
-        if section in ["vocabulary", "reading", "listening", "speaking"]:
+        elif section in ["vocabulary", "reading", "listening", "speaking"]:
             await callback.message.reply(f"⏳ *Генерирую раздел «{section}» для уровня {level}...*", parse_mode="Markdown")
             lesson_data = generate_lesson_data(level, section, user_name)
             if lesson_data:
