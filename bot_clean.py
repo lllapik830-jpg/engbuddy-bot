@@ -42,7 +42,7 @@ dp = Dispatcher()
 USER_DATA_FILE = "users.json"
 
 # --- ID менеджера (ЗАМЕНИ НА СВОЙ) ---
-MANAGER_ID = @lllapik  # СЮДА ВСТАВЬ СВОЙ ID
+MANAGER_ID = 1809897303  # СЮДА ВСТАВЬ СВОЙ ID
 
 # --- Функции работы с пользователями ---
 def load_users():
